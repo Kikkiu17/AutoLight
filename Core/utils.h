@@ -20,7 +20,12 @@ uint16_t SENS_SendTrig(Switch_t* sw)
 	while (TIM17->CNT - start_time < 10) { __NOP(); }
 	SWITCH_UnPress(sw);
 
-	while (!HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin)) { __NOP(); }
+	while (!HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin))
+	{
+		if (TIM17->CNT - start_time > 50000)
+			return 50000;
+		__NOP();
+	}
 
 	TIM17->CNT = 0;
 	if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin))

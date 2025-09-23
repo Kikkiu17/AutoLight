@@ -29,6 +29,7 @@
 #include "../ESP8266/esp8266.h"
 #include "../wifihandler/wifihandler.h"
 #include "../utils.h"
+#include "../Flash/flash.h"
 #include "../credentials.h"
 #include <string.h>
 #include <stdio.h>
@@ -85,7 +86,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+ HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -286,8 +287,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
