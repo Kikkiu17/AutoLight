@@ -43,14 +43,18 @@ Switch_t trig;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define RELAY_DIST_ON 50 		// centimeters
-#define RELAY_OFF_DELAY 30000	// milliseconds
+#define RELAY_DIST_ON 75 		// centimeters
+#define RELAY_OFF_DELAY 20000	// milliseconds
 #define RELAY_ON_DELAY 750		// milliseconds
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define BAT_ADC_CALIBRATION_VALUE 34 / 11
+#define DIST_AVERAGE_VALUES 3
+uint16_t dist;
+uint16_t mean_dist;
+uint32_t relay_on_timestamp = 0;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -135,16 +139,20 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   Response_t wifistatus;
-  uint32_t relay_on_timestamp = 0;
   while (1)
   {
 	  // get battery voltage
 	  BATTERY_GetVoltage();
 
 	  // get distance with ultrasonic sensor
-	  uint16_t dist = 343 * SENS_SendTrig(&trig) / 20000;
+	  for (uint8_t i = 0; i < DIST_AVERAGE_VALUES; i++)
+	  {
+		  mean_dist += 343 * SENS_SendTrig(&trig) / 20000;
+	  }
+	  mean_dist /= DIST_AVERAGE_VALUES;
+	  dist = mean_dist;
 
-	  if (dist < RELAY_DIST_ON /*centimeters*/)
+	  if (dist < RELAY_DIST_ON)	// centimeters
 	  {
 		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 1);
 		  if (relay_on_timestamp == 0 || switches[RELAY_SWITCH].pressed)
@@ -169,7 +177,7 @@ int main(void)
 
 	  wifistatus = WAITING;
 	  // HANDLE WIFI CONNECTION
-	  wifistatus = WIFI_ReceiveRequest(&wifi, &conn, AT_SHORT_TIMEOUT);
+	  wifistatus = WIFI_ReceiveRequest(&wifi, &conn, 10);
 	  if (wifistatus == OK)
 	  {
 		  HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);

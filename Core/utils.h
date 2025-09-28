@@ -13,9 +13,11 @@
 uint16_t SENS_SendTrig(Switch_t* sw)
 {
 	uint16_t diff = 0;
+	uint16_t stop_time = 0;
 
 	SWITCH_Press(sw);
 	// 10 us delay
+	TIM17->CNT = 0;
 	uint16_t start_time = TIM17->CNT;
 	while (TIM17->CNT - start_time < 10) { __NOP(); }
 	SWITCH_UnPress(sw);
@@ -28,14 +30,11 @@ uint16_t SENS_SendTrig(Switch_t* sw)
 	}
 
 	TIM17->CNT = 0;
-	if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin))
-	{
-		start_time = TIM17->CNT;
-		__HAL_TIM_URS_ENABLE(&htim17);
-		while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin)) { __NOP(); }
-		uint16_t stop_time = TIM17->CNT;
-		diff = stop_time - start_time;
-	}
+	start_time = TIM17->CNT;
+	//__HAL_TIM_URS_ENABLE(&htim17);
+	while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin)) { __NOP(); }
+	stop_time = TIM17->CNT;
+	diff = stop_time - start_time;
 
 	return diff;
 }

@@ -66,6 +66,8 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 				switches[id - 1].manual = false;
 				SWITCH_UnPress(&(switches[id - 1]));
 			}
+
+			return WIFI_SendResponse(conn, "200 OK", "", 0);
 		}
 	}
 
