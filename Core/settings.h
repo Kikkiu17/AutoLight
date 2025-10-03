@@ -187,7 +187,7 @@ extern Switch_t switches[1];
  * 		NOTE: external features will only be updated ONCE, every time the device is loaded in the app.
  */
 
-typedef struct bat
+typedef struct
 {
 	uint16_t voltage_mv;
 	uint16_t voltage_integer;
@@ -195,12 +195,20 @@ typedef struct bat
 
 } Battery_t;
 
-extern Battery_t bat;
+typedef struct
+{
+	Battery_t bat;
+	uint32_t sensor_dist;
+} Features_t;
+
+
+extern Features_t features;
 
 static const char FEATURES_TEMPLATE[] =
 {
 		"switch1$Luce,status$%d;"
-		"sensor1$Tensione alimentazione$%d,%dV;"
+		"sensor1$Distanza sensore$%dcm;"
+		"sensor2$Tensione alimentazione$%d,%dV;"
 };
 
 #endif /* SETTINGS_H_ */

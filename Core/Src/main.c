@@ -37,7 +37,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-Battery_t bat;
+Features_t features;
 Switch_t trig;
 /* USER CODE END PTD */
 
@@ -52,7 +52,6 @@ Switch_t trig;
 /* USER CODE BEGIN PM */
 #define BAT_ADC_CALIBRATION_VALUE 34 / 11
 #define DIST_AVERAGE_VALUES 3
-uint16_t dist;
 uint16_t mean_dist;
 uint32_t relay_on_timestamp = 0;
 /* USER CODE END PM */
@@ -68,7 +67,6 @@ Connection_t conn;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void BATTERY_GetVoltage(void);
-uint16_t dist = 0;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -150,9 +148,9 @@ int main(void)
 		  mean_dist += 343 * SENS_SendTrig(&trig) / 20000;
 	  }
 	  mean_dist /= DIST_AVERAGE_VALUES;
-	  dist = mean_dist;
+	  features.sensor_dist = mean_dist;
 
-	  if (dist < RELAY_DIST_ON)	// centimeters
+	  if (features.sensor_dist < RELAY_DIST_ON)	// centimeters
 	  {
 		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 1);
 		  if (relay_on_timestamp == 0 || switches[RELAY_SWITCH].pressed)
@@ -275,9 +273,9 @@ void BATTERY_GetVoltage(void)
 {
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_PollForConversion(&hadc1, 250);
-	bat.voltage_mv = HAL_ADC_GetValue(&hadc1) * BAT_ADC_CALIBRATION_VALUE;
-	bat.voltage_integer = bat.voltage_mv / 1000;
-	bat.voltage_decimal = (bat.voltage_mv - bat.voltage_integer * 1000) / 10;
+	features.bat.voltage_mv = HAL_ADC_GetValue(&hadc1) * BAT_ADC_CALIBRATION_VALUE;
+	features.bat.voltage_integer =features. bat.voltage_mv / 1000;
+	features.bat.voltage_decimal = (features.bat.voltage_mv - features.bat.voltage_integer * 1000) / 10;
 }
 /* USER CODE END 4 */
 
