@@ -32,9 +32,7 @@ void FLASH_WriteBuffer(uint8_t* buf, uint32_t size)
 	for (uint32_t flash_data_i = 0; flash_data_i < total_flash_data_blocks; flash_data_i++)
 	{
 		for (uint8_t byte_i = flash_data_i * FLASH_DATASIZE; byte_i < flash_data_i * FLASH_DATASIZE + FLASH_DATASIZE; byte_i++)
-		{
 			flash_data[byte_i % FLASH_DATASIZE] = (byte_i < size) ? *(buf + byte_i) : 0x00;
-		}
 
 		FLASH_DATATYPE serialized_flash_data = *((FLASH_DATATYPE*)flash_data);
 		HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, LAST_PAGE_ADDRESS + flash_data_i * FLASH_DATASIZE, serialized_flash_data);
