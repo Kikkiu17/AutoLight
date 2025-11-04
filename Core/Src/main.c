@@ -139,6 +139,14 @@ int main(void)
   Response_t wifistatus;
   while (1)
   {
+	  if (reconnection_timestamp - uwTick > RECONNECTION_DELAY_MILLIS)
+	  {
+		  // check every RECONNECTION_DELAY_MINS if this device is connected to wifi. if it is, get
+		  // latest connection info, otherwise connect
+		  WIFI_Connect(&wifi);
+		  reconnection_timestamp = uwTick;
+	  }
+
 	  // get battery voltage
 	  BATTERY_GetVoltage();
 
