@@ -88,7 +88,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
- HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -137,9 +137,10 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   Response_t wifistatus;
+  uint32_t reconnection_timestamp = 0;
   while (1)
   {
-	  if (reconnection_timestamp - uwTick > RECONNECTION_DELAY_MILLIS)
+	  if (uwTick - reconnection_timestamp > RECONNECTION_DELAY_MILLIS)
 	  {
 		  // check every RECONNECTION_DELAY_MINS if this device is connected to wifi. if it is, get
 		  // latest connection info, otherwise connect
