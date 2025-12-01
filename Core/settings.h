@@ -155,6 +155,7 @@ extern Notification_t notification;
 typedef struct sdata
 {
 	char name[NAME_MAX_SIZE];
+	char ip[15 + 1];
 } SaveData_t;
 
 extern SaveData_t savedata;

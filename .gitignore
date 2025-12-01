@@ -6,3 +6,4 @@ Release/
 *.s
 *.json
 credentials.h
+CMakeCache.txt

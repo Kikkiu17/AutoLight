@@ -20,7 +20,6 @@
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
-#include "stm32g0xx_hal_rcc.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -115,21 +114,30 @@ int main(void)
 		  __asm__("nop");
   }
 
+#ifdef ENABLE_SAVE_TO_FLASH
+  FLASH_ReadSaveData();
+  WIFI_SetName(&wifi, savedata.name);
+  if (savedata.ip[0] >= '0' && savedata.ip[0] <= '9')
+    WIFI_SetIP(&wifi, savedata.ip);
+#endif
+
   memcpy(wifi.SSID, ssid, strlen(ssid));
   memcpy(wifi.pw, password, strlen(password));
   WIFI_Connect(&wifi);
   WIFI_SetName(&wifi, (char*)ESP_NAME);
   WIFI_EnableNTPServer(&wifi, 2);
 
+  /*
+  with WIFI_SetIP(&wifi, savedata.ip) the ESP attempts to get the predefined IP by the gateway
+  the IP given by the gateway is then saved into FLASH, even if it's different. this ensures that the ESP maintains
+  the same IP between power cycles.
+  */
+  FLASH_WriteSaveData();
+
   WIFI_StartServer(&wifi, SERVER_PORT);
 
   SWITCH_Init(&(switches[RELAY_SWITCH]), false, RELAY_GPIO_Port, RELAY_Pin);
   SWITCH_Init(&trig, false, PULSE_GPIO_Port, PULSE_Pin);
-
-#ifdef ENABLE_SAVE_TO_FLASH
-  FLASH_ReadSaveData();
-  WIFI_SetName(&wifi, savedata.name);
-#endif
 
   HAL_TIM_Base_Start(&htim17);
   HAL_ADCEx_Calibration_Start(&hadc1);
