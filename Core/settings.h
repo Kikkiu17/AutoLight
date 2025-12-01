@@ -24,6 +24,36 @@ typedef uint8_t bool;
 #define STATUS_Port STATUS_LED_GPIO_Port
 #define STATUS_Pin STATUS_LED_Pin
 
+// if START_ATTEMPTS is set to -1, the program won't start until it receives
+// "ready" from the ESP
+#define START_ATTEMPTS -1
+
+// ==========================================================================================
+// 										USER DEFINES
+// ==========================================================================================
+typedef struct
+{
+	uint16_t voltage_mv;
+	uint16_t voltage_integer;
+	uint16_t voltage_decimal;
+} Battery_t;
+
+typedef struct
+{
+	bool pressed;
+	bool inverted;
+	GPIO_TypeDef* port;
+	uint16_t pin;
+	bool manual;
+} Switch_t;
+
+#define NUMBER_OF_SWITCHES 1
+#define RELAY_SWITCH 0	// index of the relay switch
+
+extern Switch_t switches[NUMBER_OF_SWITCHES];
+
+extern uint32_t TRIGGER_DISTANCE;
+
 // ==========================================================================================
 // 											FLASH
 // ==========================================================================================
@@ -131,27 +161,6 @@ extern SaveData_t savedata;
 #endif
 
 // ==========================================================================================
-// 											OTHER
-// ==========================================================================================
-
-#define START_ATTEMPTS -1
-
-typedef struct
-{
-	bool pressed;
-	bool inverted;
-	GPIO_TypeDef* port;
-	uint16_t pin;
-	bool manual;
-} Switch_t;
-
-#define NUMBER_OF_SWITCHES 1
-
-#define RELAY_SWITCH 0
-
-extern Switch_t switches[1];
-
-// ==========================================================================================
 // 										COMM TEMPLATE
 // ==========================================================================================
 
@@ -171,6 +180,7 @@ extern Switch_t switches[1];
  * switch2$Switch number two,sensor$Switch status$%d,sensor$Time$%d;
  * timestamp1$Uptime$%d;
  * sensor1$Battery voltage$%d;
+
  *
  * FEATURE				SYNTAX												OPTIONAL SYNTAX
  * sensor				sensorX$text$%d text
@@ -192,18 +202,9 @@ extern Switch_t switches[1];
 
 typedef struct
 {
-	uint16_t voltage_mv;
-	uint16_t voltage_integer;
-	uint16_t voltage_decimal;
-
-} Battery_t;
-
-typedef struct
-{
 	Battery_t bat;
 	uint32_t sensor_dist;
 } Features_t;
-
 
 extern Features_t features;
 
@@ -212,6 +213,7 @@ static const char FEATURES_TEMPLATE[] =
 		"switch1$Luce,status$%d;"
 		"sensor1$Distanza sensore$%dcm;"
 		"sensor2$Tensione alimentazione$%d,%dV;"
+		"textinput1$Distanza di attivazione (cm),button$Imposta$sendPOST ?trigger_distance="
 };
 
 #endif /* SETTINGS_H_ */

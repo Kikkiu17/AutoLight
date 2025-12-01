@@ -42,7 +42,7 @@ void WIFI_ResetComm(WIFI_t* wifi, Connection_t* conn)
 
 int32_t bufferToInt(char* buf, uint32_t size)
 {
-	if (buf == NULL) return 0;
+	if (buf == NULL) return -1;
 	uint32_t n = 0;
 	for (uint32_t i = 0; i < size; i++)
 	{
@@ -222,18 +222,18 @@ Response_t ESP8266_ResetWaitReady(void)
 		HAL_Delay(1);
 		HAL_GPIO_WritePin(ESPRST_GPIO_Port, ESPRST_Pin, 1);
 
-		HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
+		HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 1);
 		start_ok = ESP8266_WaitForStringCNDTROffset("ready", -10, 5000);
-		HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
+		HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 0);
 		__HAL_UART_CLEAR_OREFLAG(&huart1);	// clear overrun flag caused by esp reset
 		ESP8266_ClearBuffer();
 	}
 
-	HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
+	HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 1);
 	// wait for WiFi
 	if (ESP8266_WaitForStringCNDTROffset("WIFI CONNECTED", -20, 6000) == OK)
 		ESP8266_WaitForStringCNDTROffset("WIFI GOT IP", -15, 18000);
-	HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
+	HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 0);
 
 	return start_ok;
 }
@@ -423,14 +423,12 @@ Response_t WIFI_SetName(WIFI_t* wifi, char* name)
 
 	uint32_t name_size = strnlen(name, NAME_MAX_SIZE);
 
-	// if it's the same pointer, deleting savedata.name results in losing the name
-	if (name != savedata.name)
-	{
-		memset(savedata.name, 0, NAME_MAX_SIZE);
-		memcpy(savedata.name, name, name_size);
-	}
+	if (name_size != NAME_MAX_SIZE)
+		memset(savedata.name + name_size, 0, NAME_MAX_SIZE - name_size);
+	strncpy(savedata.name, name, name_size);
 
-	memset(wifi->name, 0, name_size);
+	if (name_size != NAME_MAX_SIZE)
+		memset(wifi->name + name_size, 0, NAME_MAX_SIZE - name_size);
 	strncpy(wifi->name, name, name_size);
 
 	return OK;
@@ -586,8 +584,7 @@ Response_t WIFI_ReceiveRequest(WIFI_t* wifi, Connection_t* conn, uint32_t timeou
 
 Response_t WIFI_SendResponse(Connection_t* conn, char* status_code, char* body, uint32_t body_length)
 {
-	// body invece che essere 1, è qualcosa di strano
-	if (conn == NULL || status_code == NULL || body == NULL) return NULVAL;
+	if (conn == NULL || status_code == NULL) return NULVAL;
 	if (body_length > RESPONSE_MAX_SIZE) return ERR;
 	Response_t atstatus = ERR;
 
@@ -621,7 +618,8 @@ Response_t WIFI_SendResponse(Connection_t* conn, char* status_code, char* body, 
 
 	memset(conn->response_buffer, 0, RESPONSE_MAX_SIZE);
 	snprintf(conn->response_buffer, RESPONSE_MAX_SIZE, "%s\n", status_code);
-	memcpy(conn->response_buffer + status_code_width + 1, body, body_length);
+	if (body)
+		memcpy(conn->response_buffer + status_code_width + 1, body, body_length);
 	strncat(conn->response_buffer, "\r\n", RESPONSE_MAX_SIZE - strlen(conn->response_buffer));
 
 	HAL_UART_Transmit(&STM_UART, (uint8_t*)conn->response_buffer, total_response_length, UART_TX_TIMEOUT);

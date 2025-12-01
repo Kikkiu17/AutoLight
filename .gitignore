@@ -3,3 +3,6 @@
 Debug/
 Drivers/
 Release/
+*.s
+*.json
+credentials.h

@@ -20,6 +20,7 @@
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
+#include "stm32g0xx_hal_rcc.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -28,6 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include "../ESP8266/esp8266.h"
 #include "../wifihandler/wifihandler.h"
+#include "../wifihandler/userhandlers.h"
 #include "../utils.h"
 #include "../Flash/flash.h"
 #include "../credentials.h"
@@ -43,7 +45,6 @@ Switch_t trig;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define RELAY_DIST_ON 75 		// centimeters
 #define RELAY_OFF_DELAY 20000	// milliseconds
 #define RELAY_ON_DELAY 750		// milliseconds
 /* USER CODE END PD */
@@ -159,7 +160,7 @@ int main(void)
 	  mean_dist /= DIST_AVERAGE_VALUES;
 	  features.sensor_dist = mean_dist;
 
-	  if (features.sensor_dist < RELAY_DIST_ON)	// centimeters
+	  if (features.sensor_dist < TRIGGER_DISTANCE)	// centimeters
 	  {
 		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 1);
 		  if (relay_on_timestamp == 0 || switches[RELAY_SWITCH].pressed)
@@ -208,6 +209,9 @@ int main(void)
 
 		  else if (conn.request_type == POST)
 		  {
+        if ((key_ptr = WIFI_RequestHasKey(&conn, "trigger_distance")))
+          HANDLER_SetTriggerDistance(&conn, key_ptr);
+
 			  // other POST requests code here...
 		  }
 
