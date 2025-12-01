@@ -1,9 +1,8 @@
 *.launch
 *.ld
 Debug/
-Drivers/
 Release/
 *.s
-*.json
-credentials.h
+build/
+Core/credentials.h
 CMakeCache.txt
