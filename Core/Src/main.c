@@ -132,6 +132,7 @@ int main(void)
   the IP given by the gateway is then saved into FLASH, even if it's different. this ensures that the ESP maintains
   the same IP between power cycles.
   */
+  strncpy(savedata.ip, wifi.IP, 15 + 1);
   FLASH_WriteSaveData();
 
   WIFI_StartServer(&wifi, SERVER_PORT);

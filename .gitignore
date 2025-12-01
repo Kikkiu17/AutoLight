@@ -6,3 +6,6 @@ Release/
 build/
 Core/credentials.h
 CMakeCache.txt
+.clangd
+bundles-lock.store.json
+c_cpp_properties.json

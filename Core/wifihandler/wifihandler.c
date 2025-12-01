@@ -38,9 +38,9 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 	uint32_t vaL_size = 0;
 	char* val = WIFI_GetKeyValue(conn, key_ptr, &vaL_size);
 	if (val == NULL || vaL_size > 1)
-		return WIFI_SendResponse(conn, "400 Bad Request", "ID non trovato", 14);
+		return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 	uint8_t id = *val - '0';
-	if (id > NUMBER_OF_SWITCHES || id == 0) return WIFI_SendResponse(conn, "400 Bad Request", "ID non valido", 13);
+	if (id > NUMBER_OF_SWITCHES || id == 0) return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 
 	if (conn->request_type == GET)
 	{
@@ -54,7 +54,7 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 		{
 			val = WIFI_GetKeyValue(conn, cmd_ptr, &vaL_size);
 			if (val == NULL || vaL_size > 1)
-				return WIFI_SendResponse(conn, "400 Bad Request", "Nuovo stato non trovato", 23);
+				return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 
 			if (*val - '0' == 1)
 			{
@@ -96,7 +96,7 @@ Response_t WIFIHANDLER_HandleNotificationRequest(Connection_t* conn, char* key_p
 			return WIFI_SendResponse(conn, "200 OK", notification.text, notification.size);
 	}
 
-	return WIFI_SendResponse(conn, "400 Bad Request", "Sono supportate solo richieste NOTIFICATION GET", 47);
+	return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 }
 
 Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
@@ -107,26 +107,25 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 		{
 			char* name_ptr = WIFI_RequestHasKey(conn, "name");
 			if (name_ptr == NULL)
-				return WIFI_SendResponse(conn, "400 Bad Request", "Chiave \"name\" non trovata", 25);
+				return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 			else
 			{
 				uint32_t name_size = 0;
 				name_ptr = WIFI_GetKeyValue(conn, name_ptr, &name_size);
 				if (name_ptr == NULL)
-					return WIFI_SendResponse(conn, "400 Bad Request", "Nome non trovato", 16);
+					return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 				else
 				{
 					WIFI_SetName(conn->wifi, name_ptr);
 #ifdef ENABLE_SAVE_TO_FLASH
 					FLASH_WriteSaveData();	// save name
 #endif
-					return WIFI_SendResponse(conn, "200 OK", "Nome cambiato", 13);
+					return WIFI_SendResponse(conn, "200 OK", NULL, 0);
 				}
 			}
 
 		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", "Comando POST WiFi non riconosciuto. "
-			"Scrivi wifi=help per una lista di comandi", 77);
+		else return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 	}
 	else if (conn->request_type == GET)
 	{
@@ -151,8 +150,7 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 			// this is possible if RESPONSE_MAX_SIZE is at least as big as WIFI_BUF_MAX_SIZE
 			if (RESPONSE_MAX_SIZE < WIFI_BUF_MAX_SIZE)
 			{
-				return WIFI_SendResponse(conn, "500 Internal server error", "RESPONSE_MAX_SIZE is "
-						"smaller than WIFI_BUF_MAX_SIZE", 51);
+				return WIFI_SendResponse(conn, "500 Internal Server Error", NULL, 0);
 			}
 			else
 				return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, sizeof(conn->wifi->buf));
@@ -163,8 +161,7 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 					"\nrequest: %s", conn->connection_number, conn->request_size, conn->request);
 			return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, strlen(conn->wifi->buf));
 		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", "Comando GET WiFi non riconosciuto. "
-				"Scrivi wifi=help per una lista di comandi", 76);
+		else return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
 	}
 
 	return ERR;
