@@ -52,6 +52,7 @@ typedef struct
 
 extern Switch_t switches[NUMBER_OF_SWITCHES];
 
+#define DEFAULT_TRIGGER_DISTANCE 75
 extern uint32_t TRIGGER_DISTANCE;
 
 // ==========================================================================================
@@ -113,7 +114,7 @@ static const char ESP_NAME[] = "SNSE device";
  * NOTE: this can contain the network SSID and PASSWORD, so if those strings are larger than this buffer,
  * the network name and/or its password will be truncated, resulting in no WiFi connection!
  */
-#define WIFI_BUF_MAX_SIZE 128
+#define WIFI_BUF_MAX_SIZE 220
 
 /**
  * UART_BUFFER_SIZE
@@ -156,6 +157,7 @@ typedef struct sdata
 {
 	char name[NAME_MAX_SIZE];
 	char ip[15 + 1];
+	int trigger_distance;
 } SaveData_t;
 
 extern SaveData_t savedata;

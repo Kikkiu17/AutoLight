@@ -119,6 +119,11 @@ int main(void)
   WIFI_SetName(&wifi, savedata.name);
   if (savedata.ip[0] >= '0' && savedata.ip[0] <= '9')
     WIFI_SetIP(&wifi, savedata.ip);
+
+  if (savedata.trigger_distance != 0xFFFF && savedata.trigger_distance != 0)
+    TRIGGER_DISTANCE = savedata.trigger_distance;
+  else
+    TRIGGER_DISTANCE = DEFAULT_TRIGGER_DISTANCE;
 #endif
 
   memcpy(wifi.SSID, ssid, strlen(ssid));

@@ -170,7 +170,7 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 Response_t WIFIHANDLER_HandleFeaturePacket(Connection_t* conn, char* features_template)
 {
 	memset(conn->wifi->buf, 0, WIFI_BUF_MAX_SIZE);
-	sprintf(conn->wifi->buf, features_template,
+	snprintf(conn->wifi->buf, WIFI_BUF_MAX_SIZE, features_template,
 			switches[0].pressed,
 			features.sensor_dist,
 			features.bat.voltage_integer, features.bat.voltage_decimal

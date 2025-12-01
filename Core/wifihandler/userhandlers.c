@@ -15,5 +15,8 @@ Response_t HANDLER_SetTriggerDistance(Connection_t *conn, char *key_ptr)
     }
 
     TRIGGER_DISTANCE = new_distance;
+
+    savedata.trigger_distance = new_distance;
+    FLASH_WriteSaveData();
     return WIFI_SendResponse(conn, "200 OK", NULL, 0);
 }
