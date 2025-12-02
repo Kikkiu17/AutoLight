@@ -10,7 +10,7 @@ Response_t HANDLER_SetTriggerDistance(Connection_t *conn, char *key_ptr)
 
     if (new_distance == -1)
     {
-        WIFI_SendResponse(conn, "500 Internal Server Error", "Distanza non valida", 19);
+        WIFI_SendResponse(conn, "500 Internal Server Error", "", 0);
         return ERR;
     }
 
