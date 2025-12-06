@@ -19,7 +19,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "cmsis_gcc.h"
 #include "dma.h"
+#include "stm32g030xx.h"
+#include "stm32g0xx_hal_cortex.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -111,31 +114,41 @@ int main(void)
   if (ESP8266_Init() == TIMEOUT)
   {
 	  while (1)
-		  __asm__("nop");
+		  __NOP();
   }
 
 #ifdef ENABLE_SAVE_TO_FLASH
   FLASH_ReadSaveData();
-  WIFI_SetName(&wifi, savedata.name);
-  if (savedata.ip[0] >= '0' && savedata.ip[0] <= '9')
-    WIFI_SetIP(&wifi, savedata.ip);
+  if (WIFI_SetName(&wifi, savedata.name) == ERR)
+    WIFI_SetName(&wifi, (char*)ESP_NAME); // happens when there is nothing saved to FLASH, so set default name
+  WIFI_SetIP(&wifi, savedata.ip);         // if there is nothing saved to FLASH, this function does nothing
 
-  if (savedata.trigger_distance != 0xFFFF && savedata.trigger_distance != 0)
-    TRIGGER_DISTANCE = savedata.trigger_distance;
+  if (savedata.trigger_distance == 0xFFFF || savedata.trigger_distance == 0)
+    TRIGGER_DISTANCE = DEFAULT_TRIGGER_DISTANCE;  // happens when there is nothinf saved to FLASH 
   else
-    TRIGGER_DISTANCE = DEFAULT_TRIGGER_DISTANCE;
+    TRIGGER_DISTANCE = savedata.trigger_distance;
+#else
+  WIFI_SetName(&wifi, (char*)ESP_NAME);
 #endif
 
   memcpy(wifi.SSID, ssid, strlen(ssid));
   memcpy(wifi.pw, password, strlen(password));
-  WIFI_Connect(&wifi);
-  WIFI_SetName(&wifi, (char*)ESP_NAME);
+  if (WIFI_Connect(&wifi) == FAIL)
+  {
+    // restore ESP to factory defaults and try again
+    if (ESP8266_Restore() == OK)
+      NVIC_SystemReset();
+    else
+      // error while restoring ESP
+      while (1) { __NOP(); }
+  }
   WIFI_EnableNTPServer(&wifi, 2);
 
   /*
-  with WIFI_SetIP(&wifi, savedata.ip) the ESP attempts to get the predefined IP by the gateway
-  the IP given by the gateway is then saved into FLASH, even if it's different. this ensures that the ESP maintains
-  the same IP between power cycles.
+  The first time the ESP connects to WiFi, the gateway assigns an IP to it, which now gets saved to FLASH.
+  The next time the ESP connects, the gateway could assign a different IP; to prevent this, the function
+  WIFI_SetIP(&wifi, savedata.ip); loads the IP previously saved on FLASH so that the ESP tries to connect
+  and get this IP
   */
   strncpy(savedata.ip, wifi.IP, 15 + 1);
   FLASH_WriteSaveData();
@@ -178,9 +191,11 @@ int main(void)
 	  {
 		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 1);
 		  if (relay_on_timestamp == 0 || switches[RELAY_SWITCH].pressed)
+        // sets the time when something is first detected
 			  relay_on_timestamp = uwTick;
 		  if (uwTick - relay_on_timestamp > RELAY_ON_DELAY)
 		  {
+        // if something is closer than TRIGGER_DISTANCE for RELAY_ON_DELAY milliseconds, it turns on the relay
 			  relay_on_timestamp = uwTick;
 			  SWITCH_Press(&(switches[RELAY_SWITCH]));
 		  }
@@ -190,6 +205,8 @@ int main(void)
 		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 0);
 		  if (uwTick - relay_on_timestamp > RELAY_OFF_DELAY && !switches[RELAY_SWITCH].manual)
 		  {
+        // if the switch is not set to manual mode, nothing is detected in TRIGGER_DISTANCE cm and
+        // this last condition lasts for more than RELAY_OFF_DELAY ms, the relay turns off
 			  relay_on_timestamp = 0;
 			  SWITCH_UnPress(&(switches[RELAY_SWITCH]));
 		  }

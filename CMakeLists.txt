@@ -42,18 +42,6 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
-file(GLOB_RECURSE USER_LIBS
-    "${CMAKE_SOURCE_DIR}/Core/ESP8266/*.c"
-    "${CMAKE_SOURCE_DIR}/Core/Flash/*.c"
-    "${CMAKE_SOURCE_DIR}/Core/wifihandler/*.c"
-)
-
-# Add sources to executable
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
-    ${USER_LIBS}
-)
-
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
@@ -73,3 +61,24 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+file(GLOB_RECURSE USER_LIBS
+    "${CMAKE_SOURCE_DIR}/Core/ESP8266/*.c"
+    "${CMAKE_SOURCE_DIR}/Core/Flash/*.c"
+    "${CMAKE_SOURCE_DIR}/Core/wifihandler/*.c"
+)
+
+# Add sources to executable
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    ${USER_LIBS}
+)
+
+# generate .bin file
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+)
+
+set(CMAKE_C_FLAGS_DEBUG "-Og -g3 -flto")
+set(CMAKE_CXX_FLAGS_DEBUG "-Os -g3 -flto")
+set(CMAKE_C_FLAGS_RELEASE "-Os -g0 -flto")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -g0 -flto")
