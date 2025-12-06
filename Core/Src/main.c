@@ -150,7 +150,7 @@ int main(void)
   WIFI_SetIP(&wifi, savedata.ip); loads the IP previously saved on FLASH so that the ESP tries to connect
   and get this IP
   */
-  strncpy(savedata.ip, wifi.IP, 15 + 1);
+  strncpy(savedata.ip, wifi.IP, 15);
   FLASH_WriteSaveData();
 
   WIFI_StartServer(&wifi, SERVER_PORT);
