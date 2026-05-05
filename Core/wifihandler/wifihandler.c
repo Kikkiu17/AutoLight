@@ -8,7 +8,14 @@
 #include "wifihandler.h"
 #include "../Flash/flash.h"
 
-Notification_t notification;
+Notification_t notification =
+{
+	.text = NULL,
+	.size = 0,
+	.read = 0,
+	.clear_if_read = true
+};
+
 Switch_t switches[NUMBER_OF_SWITCHES];
 
 void SWITCH_Init(Switch_t* sw, bool inverted, GPIO_TypeDef* port, uint16_t pin)
@@ -38,9 +45,9 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 	uint32_t vaL_size = 0;
 	char* val = WIFI_GetKeyValue(conn, key_ptr, &vaL_size);
 	if (val == NULL || vaL_size > 1)
-		return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+		return WIFI_SendResponse(conn, "400 Bad Request", "", 104);
 	uint8_t id = *val - '0';
-	if (id > NUMBER_OF_SWITCHES || id == 0) return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+	if (id > NUMBER_OF_SWITCHES || id == 0) return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 
 	if (conn->request_type == GET)
 	{
@@ -54,7 +61,7 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 		{
 			val = WIFI_GetKeyValue(conn, cmd_ptr, &vaL_size);
 			if (val == NULL || vaL_size > 1)
-				return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+				return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 
 			if (*val - '0' == 1)
 			{
@@ -66,8 +73,6 @@ Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
 				switches[id - 1].manual = false;
 				SWITCH_UnPress(&(switches[id - 1]));
 			}
-
-			return WIFI_SendResponse(conn, "200 OK", "", 0);
 		}
 	}
 
@@ -78,12 +83,14 @@ void NOTIFICATION_Set(char* text, uint8_t size)
 {
 	notification.text = text;
 	notification.size = size;
+	notification.read = false;
 }
 
 void NOTIFICATION_Reset()
 {
 	notification.text = NULL;
 	notification.size = 0;
+	notification.read = true;
 }
 
 Response_t WIFIHANDLER_HandleNotificationRequest(Connection_t* conn, char* key_ptr)
@@ -93,10 +100,16 @@ Response_t WIFIHANDLER_HandleNotificationRequest(Connection_t* conn, char* key_p
 		if (notification.size == 0 || notification.text == NULL)
 			return WIFI_SendResponse(conn, "200 OK", "Vuoto", 5);
 		else
+		{
 			return WIFI_SendResponse(conn, "200 OK", notification.text, notification.size);
+			if (notification.clear_if_read)
+				NOTIFICATION_Reset();
+			else
+				notification.read = true;
+		}
 	}
 
-	return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+	return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 }
 
 Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
@@ -107,25 +120,25 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 		{
 			char* name_ptr = WIFI_RequestHasKey(conn, "name");
 			if (name_ptr == NULL)
-				return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+				return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 			else
 			{
 				uint32_t name_size = 0;
 				name_ptr = WIFI_GetKeyValue(conn, name_ptr, &name_size);
 				if (name_ptr == NULL)
-					return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+					return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 				else
 				{
 					WIFI_SetName(conn->wifi, name_ptr);
 #ifdef ENABLE_SAVE_TO_FLASH
 					FLASH_WriteSaveData();	// save name
 #endif
-					return WIFI_SendResponse(conn, "200 OK", NULL, 0);
+					return WIFI_SendResponse(conn, "200 OK", "", 0);
 				}
 			}
 
 		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+		else return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 	}
 	else if (conn->request_type == GET)
 	{
@@ -150,7 +163,7 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 			// this is possible if RESPONSE_MAX_SIZE is at least as big as WIFI_BUF_MAX_SIZE
 			if (RESPONSE_MAX_SIZE < WIFI_BUF_MAX_SIZE)
 			{
-				return WIFI_SendResponse(conn, "500 Internal Server Error", NULL, 0);
+				return WIFI_SendResponse(conn, "500 Internal server error", "", 0);
 			}
 			else
 				return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, sizeof(conn->wifi->buf));
@@ -161,7 +174,7 @@ Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
 					"\nrequest: %s", conn->connection_number, conn->request_size, conn->request);
 			return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, strlen(conn->wifi->buf));
 		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", NULL, 0);
+		else return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
 	}
 
 	return ERR;
@@ -171,9 +184,14 @@ Response_t WIFIHANDLER_HandleFeaturePacket(Connection_t* conn, char* features_te
 {
 	memset(conn->wifi->buf, 0, WIFI_BUF_MAX_SIZE);
 	snprintf(conn->wifi->buf, WIFI_BUF_MAX_SIZE, features_template,
-			switches[0].pressed,
-			features.sensor_dist,
-			features.bat.voltage_integer, features.bat.voltage_decimal
+			sens_distance,
+			voltage,
+			//current_int, current_dec,
+			//power,
+			switches[RELAY_SWITCH].pressed,
+			ldo_temp,
+			rly_temp,
+			uwTick
 	);
 	return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, strlen(conn->wifi->buf));
 }

@@ -12,6 +12,7 @@
 #include "usart.h"
 #include "../settings.h"
 
+#define RECONNECT_CHECK_INTERVAL 60000 // in milliseconds
 extern bool WIFI_response_sent;
 
 typedef enum
@@ -38,8 +39,8 @@ typedef struct
 	char		buf[WIFI_BUF_MAX_SIZE + 1];
 	char		hostname[HOSTNAME_MAX_SIZE + 1];
 	char		name[NAME_MAX_SIZE + 1];
-	char		time[8];	// hh:mm:ss
-	uint32_t	last_time_read;
+	char		time[8 + 1];	// hh:mm:ss
+	int32_t	last_time_read;
 } WIFI_t;
 
 typedef struct
@@ -78,10 +79,12 @@ If it's already connected, it saves the current IP and SSID in the WIFI_t struct
 Note that this is a blocking function: if not connected to WiFi, it blocks until it connects or it timeouts (15 seconds)
 */
 Response_t WIFI_Connect(WIFI_t* wifi);
+Response_t WIFI_ReconnectIfDisconnected(WIFI_t* wifi);
 Response_t WIFI_GetConnectionInfo(WIFI_t* wifi);
 Response_t WIFI_SetCWMODE(uint8_t mode);
 Response_t WIFI_SetCIPMUX(uint8_t mux);
 Response_t WIFI_SetCIPSERVER(uint16_t server_port);
+Response_t WIFI_SetConnectionTimeout(uint16_t timeout);
 Response_t WIFI_SetHostname(WIFI_t* wifi, const char* hostname);
 Response_t WIFI_GetHostname(WIFI_t* wifi);
 Response_t WIFI_SetName(WIFI_t* wifi, char* name);

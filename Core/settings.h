@@ -16,13 +16,15 @@ typedef uint8_t bool;
 #define false 0
 
 // CHANGE THESE SETTINGS ACCORDING TO YOUR SETUP!!!
-#define STM_UART huart1
-#define UART_DMA_CHANNEL DMA1_Channel1
-#define ESP_RST_PORT ESPRST_GPIO_Port
-#define ESP_RST_PIN ESPRST_Pin
+#define STM_UART					huart1
+#define UART_DMA_CHANNEL_HANDLE		DMA1_Channel2
+#define UART_DMA_LL_CHANNEL			LL_DMA_CHANNEL_2
+#define UART_DMA_TYPEDEF			DMA1
+#define ESP_RST_PORT				ESPNRST_GPIO_Port
+#define ESP_RST_PIN					ESPNRST_Pin
 
-#define STATUS_Port STATUS_LED_GPIO_Port
-#define STATUS_Pin STATUS_LED_Pin
+#define STATUS_Port					STATUS_LED_GPIO_Port
+#define STATUS_Pin					STATUS_LED_Pin
 
 // if START_ATTEMPTS is set to -1, the program won't start until it receives
 // "ready" from the ESP
@@ -33,13 +35,6 @@ typedef uint8_t bool;
 // ==========================================================================================
 typedef struct
 {
-	uint16_t voltage_mv;
-	uint16_t voltage_integer;
-	uint16_t voltage_decimal;
-} Battery_t;
-
-typedef struct
-{
 	bool pressed;
 	bool inverted;
 	GPIO_TypeDef* port;
@@ -48,12 +43,9 @@ typedef struct
 } Switch_t;
 
 #define NUMBER_OF_SWITCHES 1
-#define RELAY_SWITCH 0	// index of the relay switch
+#define RELAY_SWITCH 0
 
 extern Switch_t switches[NUMBER_OF_SWITCHES];
-
-#define DEFAULT_TRIGGER_DISTANCE 75
-extern uint32_t TRIGGER_DISTANCE;
 
 // ==========================================================================================
 // 											FLASH
@@ -79,9 +71,7 @@ typedef uint64_t FLASH_DATATYPE;
 static const char ESP_NAME[] = "SNSE device";
 #define SERVER_PORT 34677
 
-// NOT SUPPORTED:
-//static const char ESP_HOSTNAME[] = "ESPDEVICE002"; // template: ESPDEVICExxx
-//static const char ESP_IP[] = "192.168.1.38";
+static const char ESP_HOSTNAME[] = "SNSEDEVICE01"; // template: SNSEDEVICExx
 
 #define AT_SHORT_TIMEOUT 250
 #define AT_MEDIUM_TIMEOUT 500
@@ -108,13 +98,10 @@ static const char ESP_NAME[] = "SNSE device";
 /**
  * WIFI_BUF_MAX_SIZE
  *
- * contains short commands to be sent to the ESP, for example to connect it to WiFi, to get the current IP...
- * (check esp8266.c)
- * if you don't use it directly, it can be left at the default value.
- * NOTE: this can contain the network SSID and PASSWORD, so if those strings are larger than this buffer,
- * the network name and/or its password will be truncated, resulting in no WiFi connection!
+ * the longest content is usually the FEATURES array, so the minimum size should be the size of
+ * FEATURES_TEMPLATE. usually this is the reason of most hard faults, so try increasing it
  */
-#define WIFI_BUF_MAX_SIZE 220
+#define WIFI_BUF_MAX_SIZE 280
 
 /**
  * UART_BUFFER_SIZE
@@ -136,13 +123,15 @@ static const char ESP_NAME[] = "SNSE device";
 #define RECONNECTION_DELAY_MINS 1	// minutes
 #define RECONNECTION_DELAY_MILLIS RECONNECTION_DELAY_MINS * 60000
 
-typedef struct notif
+typedef struct
 {
 	char* text;
 	uint8_t size;
+	bool read;
+	bool clear_if_read;
 } Notification_t;
 
-extern Notification_t notification;
+extern Notification_t notification;	// defined in wifihandler/wifihandler.c
 
 // ==========================================================================================
 // 										SAVE DATA
@@ -157,7 +146,6 @@ typedef struct sdata
 {
 	char name[NAME_MAX_SIZE];
 	char ip[15 + 1];
-	int trigger_distance;
 } SaveData_t;
 
 extern SaveData_t savedata;
@@ -183,12 +171,12 @@ extern SaveData_t savedata;
  * switch2$Switch number two,sensor$Switch status$%d,sensor$Time$%d;
  * timestamp1$Uptime$%d;
  * sensor1$Battery voltage$%d;
-
  *
  * FEATURE				SYNTAX												OPTIONAL SYNTAX
  * sensor				sensorX$text$%d text
  * switch				switchX$text,status$%d								switchX$switch_name,status$%d,sensor$sensor_name$%d
- * textinut				textinputX$default_text								textinputX$txt_name,button$btn_name$send<command> (without a space)
+ *		status has to be 0 or 1, according to the switch state
+ * textinput				textinputX$default_text								textinputX$txt_name,button$btn_name$send<command> (without a space)
  * 		text inside the textinput field will be appended at the end of the command to be sent
  * timepicker			timepicker$%s (time data, should be hh:mm-hh:mm)	timepicker$%s,button$btn_name$send<command>
  * timestamp			timestampX$text$d text
@@ -199,24 +187,33 @@ extern SaveData_t savedata;
  *
  * 		external features:
  * 		1 = GRAPH
+ *			to mark a SENSOR to be put on the graph, append:
+ *			$graph_LineLabel (unit)
+ *			LineLabel will be the label of the graph data. this unit will be used for the DAYS time frame.
  *
- * 		NOTE: external features will only be updated ONCE, every time the device is loaded in the app.
+ *			if you need another unit for MONTHS and YEARS, append:
+ *			$graph_LineLabel1 (unit1)_LineLabel2 (unit2)
+ *			LineLabel1 and unit1 will be used for DAYS; LineLabel2 and unit2 will be used for MONTHS and YEARS
+ *
+ *			example: "sensor1$Power$%d W$graph_Average power (W)_Energy (Wh);"
+ *
+ * 		NOTE: external features will only be updated ONCE, every time the device is loaded in the app. The user can manually refresh the data.
  */
 
-typedef struct
-{
-	Battery_t bat;
-	uint32_t sensor_dist;
-} Features_t;
-
-extern Features_t features;
+extern uint16_t ldo_temp, rly_temp;
+extern uint32_t voltage, current_int, current_dec, power;
+extern uint32_t sens_distance;
 
 static const char FEATURES_TEMPLATE[] =
 {
-		"switch1$Luce,status$%d;"
-		"sensor1$Distanza sensore$%dcm;"
-		"sensor2$Tensione alimentazione$%d,%dV;"
-		"textinput1$Distanza di attivazione (cm),button$Imposta$sendPOST ?trigger_distance="
+	"sensor1$Distanza sensore$%dcm;"
+	"sensor2$Tensione$%d V;"
+	//"sensor3$Corrente$%d.%d A;"
+	//"sensor4$Potenza$%d W;"
+	"switch1$Rele',status$%d;"
+	"sensor3$Temperatura LDO$%d °C;"
+	"sensor4$Temperatura RELE'$%d °C;"
+	"timestamp1$Tempo CPU$%d;"
 };
 
 #endif /* SETTINGS_H_ */

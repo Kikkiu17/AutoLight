@@ -7,5 +7,4 @@ build/
 Core/credentials.h
 CMakeCache.txt
 .clangd
-.settings
 .vscode

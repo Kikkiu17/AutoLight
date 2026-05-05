@@ -7,7 +7,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2025 STMicroelectronics.
+  * Copyright (c) 2026 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -57,18 +57,23 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define ESPRST_Pin GPIO_PIN_9
-#define ESPRST_GPIO_Port GPIOB
-#define STATUS_LED_Pin GPIO_PIN_15
-#define STATUS_LED_GPIO_Port GPIOC
-#define RELAY_Pin GPIO_PIN_4
-#define RELAY_GPIO_Port GPIOA
-#define BAT_ADC_Pin GPIO_PIN_5
-#define BAT_ADC_GPIO_Port GPIOA
-#define PULSE_Pin GPIO_PIN_11
-#define PULSE_GPIO_Port GPIOA
+#define ISENSE_Pin GPIO_PIN_0
+#define ISENSE_GPIO_Port GPIOA
+#define VSENSE_Pin GPIO_PIN_1
+#define VSENSE_GPIO_Port GPIOA
+#define RLY_Pin GPIO_PIN_3
+#define RLY_GPIO_Port GPIOA
+#define NTCLDO_Pin GPIO_PIN_4
+#define NTCLDO_GPIO_Port GPIOA
+#define NTCRLY_Pin GPIO_PIN_5
+#define NTCRLY_GPIO_Port GPIOA
+#define ESPNRST_Pin GPIO_PIN_6
+#define ESPNRST_GPIO_Port GPIOA
+#define STATUS_LED_Pin GPIO_PIN_7
+#define STATUS_LED_GPIO_Port GPIOA
 #define ECHO_Pin GPIO_PIN_12
 #define ECHO_GPIO_Port GPIOA
+#define ECHO_EXTI_IRQn EXTI4_15_IRQn
 
 /* USER CODE BEGIN Private defines */
 

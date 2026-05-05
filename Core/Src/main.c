@@ -6,7 +6,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2025 STMicroelectronics.
+  * Copyright (c) 2026 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -19,49 +19,62 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "cmsis_gcc.h"
 #include "dma.h"
-#include "stm32g030xx.h"
-#include "stm32g0xx_hal_cortex.h"
+#include "stm32g0xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <math.h>
+#include "../thermistor/adc_table.h"
+
 #include "../ESP8266/esp8266.h"
+#include "../Flash/flash.h"
 #include "../wifihandler/wifihandler.h"
 #include "../wifihandler/userhandlers.h"
-#include "../utils.h"
-#include "../Flash/flash.h"
 #include "../credentials.h"
-#include <string.h>
-#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-Features_t features;
-Switch_t trig;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define RELAY_OFF_DELAY 20000	// milliseconds
-#define RELAY_ON_DELAY 750		// milliseconds
+#define AVG_VALUES 50
+#define N_SENSORS 4
+#define ISENSE_INDEX 0
+#define VSENSE_INDEX 1
+#define LDO_NTC_INDEX 2
+#define RLY_NTC_INDEX 3
+
+#define VOLTAGE_CAL_VALUE 0
+#define CURRENT_CAL_VALUE -1753
+
+#define CURRENT_DEADZONE 0.18   // amperes
+#define MAX_RELAY_POWER 1000    // watts
+
+#define ACTIVATION_DISTANCE 60  // cm
+#define ACTIVATION_TIME 1500    // milliseconds
+#define TURN_OFF_TIME 15000     // milliseconds
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define BAT_ADC_CALIBRATION_VALUE 34 / 11
-#define DIST_AVERAGE_VALUES 3
-uint16_t mean_dist;
-uint32_t relay_on_timestamp = 0;
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+uint16_t adc_buf[4 * AVG_VALUES];
+uint16_t ldo_temp, rly_temp;
+uint32_t voltage, current_int, current_dec, power;
+uint16_t echo;
+uint32_t sens_distance, last_distance;
 WIFI_t wifi;
 Connection_t conn;
 /* USER CODE END PV */
@@ -69,11 +82,41 @@ Connection_t conn;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-void BATTERY_GetVoltage(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint8_t start_check = 0;
+uint32_t distance_check_time = 0, turn_off_check_time = 0;
+uint8_t startup_finished = 0;
+
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin)
+{
+  if (!startup_finished) return;
+  HAL_TIM_Base_Start(&htim17);
+}
+
+void HAL_GPIO_EXTI_Falling_Callback(uint16_t GPIO_Pin)
+{
+  if (!startup_finished) return;
+  HAL_TIM_Base_Stop(&htim17);
+  echo = TIM17->CNT;
+  __HAL_TIM_SET_COUNTER(&htim17, 0);
+  // wait ~250ms before sending new trig pulse
+  __HAL_TIM_ENABLE(&htim14);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (!startup_finished) return;
+  if (htim->Instance == TIM14)
+  {
+    // timer is already stopped (one pulse mode)
+    // send 10us trig pulse
+    __HAL_TIM_ENABLE(&htim1);
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -107,10 +150,22 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_USART1_UART_Init();
   MX_ADC1_Init();
+  MX_USART1_UART_Init();
+  MX_TIM1_Init();
   MX_TIM17_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
+  HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&adc_buf, 4 * AVG_VALUES);
+
+  // configure and start trig timer
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+  HAL_TIM_Base_Start_IT(&htim14);
+
+  // make sure relay is off. user should set it as RESET by default anyway on CubeMX...
+  HAL_GPIO_WritePin(RLY_GPIO_Port, RLY_Pin, GPIO_PIN_RESET);
+
   if (ESP8266_Init() == TIMEOUT)
   {
 	  while (1)
@@ -122,26 +177,20 @@ int main(void)
   if (WIFI_SetName(&wifi, savedata.name) == ERR)
     WIFI_SetName(&wifi, (char*)ESP_NAME); // happens when there is nothing saved to FLASH, so set default name
   WIFI_SetIP(&wifi, savedata.ip);         // if there is nothing saved to FLASH, this function does nothing
-
-  if (savedata.trigger_distance == 0xFFFF || savedata.trigger_distance == 0)
-    TRIGGER_DISTANCE = DEFAULT_TRIGGER_DISTANCE;  // happens when there is nothinf saved to FLASH 
-  else
-    TRIGGER_DISTANCE = savedata.trigger_distance;
 #else
   WIFI_SetName(&wifi, (char*)ESP_NAME);
 #endif
 
   memcpy(wifi.SSID, ssid, strlen(ssid));
   memcpy(wifi.pw, password, strlen(password));
-  if (WIFI_Connect(&wifi) == FAIL)
+  HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 1);
+  uint32_t connect_status = WIFI_Connect(&wifi);
+  if (connect_status == FAIL || connect_status == ERROR)
   {
-    // restore ESP to factory defaults and try again
-    if (ESP8266_Restore() == OK)
-      NVIC_SystemReset();
-    else
-      // error while restoring ESP
-      while (1) { __NOP(); }
+    // try again
+    NVIC_SystemReset();
   }
+  HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 0);
   WIFI_EnableNTPServer(&wifi, 2);
 
   /*
@@ -155,111 +204,133 @@ int main(void)
 
   WIFI_StartServer(&wifi, SERVER_PORT);
 
-  SWITCH_Init(&(switches[RELAY_SWITCH]), false, RELAY_GPIO_Port, RELAY_Pin);
-  SWITCH_Init(&trig, false, PULSE_GPIO_Port, PULSE_Pin);
+  SWITCH_Init(&(switches[RELAY_SWITCH]), false, RLY_GPIO_Port, RLY_Pin);
 
-  HAL_TIM_Base_Start(&htim17);
-  HAL_ADCEx_Calibration_Start(&hadc1);
+  startup_finished = 1;
+
+  __HAL_TIM_ENABLE(&htim1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  Response_t wifistatus;
-  uint32_t reconnection_timestamp = 0;
   while (1)
   {
-	  if (uwTick - reconnection_timestamp > RECONNECTION_DELAY_MILLIS)
-	  {
-		  // check every RECONNECTION_DELAY_MINS if this device is connected to wifi. if it is, get
-		  // latest connection info, otherwise connect
-		  WIFI_Connect(&wifi);
-		  reconnection_timestamp = uwTick;
-	  }
+    uint32_t isense_avg = 0, vsense_avg = 0, ldo_avg = 0, rly_avg = 0;
+    sens_distance = 0;
+    if (AVG_VALUES > 1)
+    {
+      for (uint32_t i = 0; i < N_SENSORS * AVG_VALUES; i += N_SENSORS)
+      {
+        isense_avg += adc_buf[i + ISENSE_INDEX];
+        vsense_avg += adc_buf[i + VSENSE_INDEX];
+        ldo_avg += adc_buf[i + LDO_NTC_INDEX];
+        rly_avg += adc_buf[i + RLY_NTC_INDEX];
+      }
+  
+      isense_avg /= AVG_VALUES;
+      vsense_avg /= AVG_VALUES;
+      ldo_avg /= AVG_VALUES;
+      rly_avg /= AVG_VALUES;
+    }
+    else
+    {
+      isense_avg = adc_buf[ISENSE_INDEX];
+      vsense_avg = adc_buf[VSENSE_INDEX];
+      ldo_avg = adc_buf[LDO_NTC_INDEX];
+      rly_avg = adc_buf[RLY_NTC_INDEX];
+    }
 
-	  // get battery voltage
-	  BATTERY_GetVoltage();
+    sens_distance = (echo * 343 / 20000 + last_distance) / 2;
+    last_distance = sens_distance;
 
-	  // get distance with ultrasonic sensor
-	  for (uint8_t i = 0; i < DIST_AVERAGE_VALUES; i++)
-	  {
-		  mean_dist += 343 * SENS_SendTrig(&trig) / 20000;
-	  }
-	  mean_dist /= DIST_AVERAGE_VALUES;
-	  features.sensor_dist = mean_dist;
+    //vcur = (float)isense / 4096.0 * 3.3;
+    //current = vcur * 6.95;
+    // vcur is the opamp vout
+    // 6.95 is a calibration value. tested at 2.17A
+    uint32_t current_mul_100 = isense_avg * (5599 + CURRENT_CAL_VALUE) / 1000;
+    if (current_mul_100 < CURRENT_DEADZONE * 100)
+      current_mul_100 = 0;
+    current_int = current_mul_100 / 100;
+    current_dec = current_mul_100 - current_int * 100;
 
-	  if (features.sensor_dist < TRIGGER_DISTANCE)	// centimeters
-	  {
-		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 1);
-		  if (relay_on_timestamp == 0 || switches[RELAY_SWITCH].pressed)
-        // sets the time when something is first detected
-			  relay_on_timestamp = uwTick;
-		  if (uwTick - relay_on_timestamp > RELAY_ON_DELAY)
-		  {
-        // if something is closer than TRIGGER_DISTANCE for RELAY_ON_DELAY milliseconds, it turns on the relay
-			  relay_on_timestamp = uwTick;
-			  SWITCH_Press(&(switches[RELAY_SWITCH]));
-		  }
-	  }
-	  else
-	  {
-		  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, 0);
-		  if (uwTick - relay_on_timestamp > RELAY_OFF_DELAY && !switches[RELAY_SWITCH].manual)
-		  {
-        // if the switch is not set to manual mode, nothing is detected in TRIGGER_DISTANCE cm and
-        // this last condition lasts for more than RELAY_OFF_DELAY ms, the relay turns off
-			  relay_on_timestamp = 0;
-			  SWITCH_UnPress(&(switches[RELAY_SWITCH]));
-		  }
-		  else if (!switches[RELAY_SWITCH].pressed)
-			  relay_on_timestamp = 0;
-	  }
+    // calibration: output voltage at 297V mains is 0.499V and the voltage
+    // increase is 0.04V (output) per each 1V (mains) increase
+    //vvolt = (float)vsense / 4096.0 * 3.3;
+    //voltage = ((vvolt - 0.499) / 0.040 + 297) * 0.707;
+    // the below values have been all multiplied by 100 to avoid floating point math
+    voltage = ((vsense_avg) * (7950 + VOLTAGE_CAL_VALUE) / 4096 - 1247 + 29700) * 707 / 100000;
 
-	  wifistatus = WAITING;
-	  // HANDLE WIFI CONNECTION
-	  wifistatus = WIFI_ReceiveRequest(&wifi, &conn, 10);
-	  if (wifistatus == OK)
+    power = voltage * current_mul_100 / 100;
+
+    ldo_temp = getTemperature(ldo_avg);
+    rly_temp = getTemperature(rly_avg);
+
+    if (sens_distance < ACTIVATION_DISTANCE)
+    {
+      // if distance is low enough, start check timer
+      if (!start_check)
+      {
+        if (!switches[RELAY_SWITCH].pressed)
+        {
+          distance_check_time = uwTick;
+          start_check = 1;
+        }
+        /*else
+          turn_off_check_time = 0;*/
+      }
+
+      /*if (switches[RELAY_SWITCH].pressed)
+        turn_off_check_time = uwTick;*/
+    }
+    else
+    {
+      // if distance is too much, reset the distance check time
+      distance_check_time = uwTick;
+
+      // if the relay is on, start the turn off check time (once)
+      if (switches[RELAY_SWITCH].pressed && turn_off_check_time == 0)
+        turn_off_check_time = uwTick;
+    }
+
+    // if enough time has passed while the distance is low enough, turn on the relay
+    if (start_check && uwTick - distance_check_time > ACTIVATION_TIME)
+    {
+      SWITCH_Press(&switches[RELAY_SWITCH]);
+      start_check = 0;
+      distance_check_time = uwTick;
+      turn_off_check_time = uwTick;
+    }
+
+    // if enough time has passed while the distance is high enough, turn off the relay
+    // also make sure to only turn off if it's not in manual mode (turned on by user)
+    if (uwTick - turn_off_check_time > TURN_OFF_TIME && !switches[RELAY_SWITCH].manual)
+    {
+      turn_off_check_time = 0;
+      SWITCH_UnPress(&switches[RELAY_SWITCH]);
+    }
+
+    WIFI_ReconnectIfDisconnected(&wifi);
+
+    if (power > MAX_RELAY_POWER)
+      SWITCH_UnPress(&switches[RELAY_SWITCH]);
+
+    Response_t status = WIFI_ReceiveRequest(&wifi, &conn, AT_SHORT_TIMEOUT);
+	  if (status == OK)
 	  {
-		  HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
+      HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_SET);
 		  char* key_ptr = NULL;
 
-		  if ((key_ptr = WIFI_RequestHasKey(&conn, "wifi")))
+      if ((key_ptr = WIFI_RequestHasKey(&conn, "wifi")))
 			  WIFIHANDLER_HandleWiFiRequest(&conn, key_ptr);
-		  else if ((key_ptr = WIFI_RequestHasKey(&conn, "switch")))
+      else if ((key_ptr = WIFI_RequestHasKey(&conn, "switch")))
 			  WIFIHANDLER_HandleSwitchRequest(&conn, key_ptr);
-
-		  else if (conn.request_type == GET)
-		  {
-			  if ((key_ptr = WIFI_RequestHasKey(&conn, "features")))
+      else if ((key_ptr = WIFI_RequestHasKey(&conn, "features")))
 				  WIFIHANDLER_HandleFeaturePacket(&conn, (char*)FEATURES_TEMPLATE);
-			  else if ((key_ptr = WIFI_RequestHasKey(&conn, "notification")))
-				  WIFIHANDLER_HandleNotificationRequest(&conn, key_ptr);
-			  // other GET requests code here...
-
-			  else WIFI_SendResponse(&conn, "404 Not Found", "Unknown command", 15);
-		  }
-
-		  else if (conn.request_type == POST)
-		  {
-        if ((key_ptr = WIFI_RequestHasKey(&conn, "trigger_distance")))
-          HANDLER_SetTriggerDistance(&conn, key_ptr);
-
-			  // other POST requests code here...
-		  }
-
-		  // other requests code here...
-
-		  HAL_GPIO_TogglePin(STATUS_Port, STATUS_Pin);
-	  }
-	  // OPTIONAL
-	  else if (wifistatus != TIMEOUT)
-	  {
-		  sprintf(wifi.buf, "Status: %d", wifistatus);
-		  WIFI_ResetComm(&wifi, &conn);
-		  WIFI_SendResponse(&conn, "500 Internal server error", wifi.buf, strlen(wifi.buf));
+      else if ((key_ptr = WIFI_RequestHasKey(&conn, "notification")))
+        WIFIHANDLER_HandleNotificationRequest(&conn, key_ptr);
 	  }
 
-	  // OPTIONAL
-	  WIFI_ResetConnectionIfError(&wifi, &conn, wifistatus);
+    HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_RESET);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -313,14 +384,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-void BATTERY_GetVoltage(void)
-{
-	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1, 250);
-	features.bat.voltage_mv = HAL_ADC_GetValue(&hadc1) * BAT_ADC_CALIBRATION_VALUE;
-	features.bat.voltage_integer =features. bat.voltage_mv / 1000;
-	features.bat.voltage_decimal = (features.bat.voltage_mv - features.bat.voltage_integer * 1000) / 10;
-}
+
 /* USER CODE END 4 */
 
 /**
