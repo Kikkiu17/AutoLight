@@ -275,12 +275,7 @@ int main(void)
           distance_check_time = uwTick;
           start_check = 1;
         }
-        /*else
-          turn_off_check_time = 0;*/
       }
-
-      /*if (switches[RELAY_SWITCH].pressed)
-        turn_off_check_time = uwTick;*/
     }
     else
     {
@@ -298,12 +293,12 @@ int main(void)
       SWITCH_Press(&switches[RELAY_SWITCH]);
       start_check = 0;
       distance_check_time = uwTick;
-      turn_off_check_time = uwTick;
+      turn_off_check_time = 0;
     }
 
     // if enough time has passed while the distance is high enough, turn off the relay
     // also make sure to only turn off if it's not in manual mode (turned on by user)
-    if (uwTick - turn_off_check_time > TURN_OFF_TIME && !switches[RELAY_SWITCH].manual)
+    if (turn_off_check_time != 0 && uwTick - turn_off_check_time > TURN_OFF_TIME && !switches[RELAY_SWITCH].manual)
     {
       turn_off_check_time = 0;
       SWITCH_UnPress(&switches[RELAY_SWITCH]);
