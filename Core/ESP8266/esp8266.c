@@ -32,6 +32,7 @@
 
 volatile char uart_buffer[UART_BUFFER_SIZE + 1];
 bool WIFI_response_sent = false;
+uint32_t reconnect_time = 0;
 
 void WIFI_Init(WIFI_t* wifi)
 {
@@ -665,4 +666,18 @@ Response_t WIFI_MQTT_Receive(WIFI_t* wifi, char* topic_out, char* payload_out, u
 	
 	ESP8266_ClearBuffer();
 	return OK;
+}
+
+Response_t WIFI_MQTT_IsConnected(WIFI_t* wifi)
+{
+	if (wifi == NULL) return NULVAL;
+	
+	ESP8266_ClearBuffer();
+	Response_t result = ESP8266_SendATCommandKeepString("AT+MQTTCONN?\r\n", 15, 5000);
+	if (result != OK) return result;
+
+	if (strstr((char*)uart_buffer, "+MQTTCONN:0,1") != NULL)
+		return OK;
+	
+	return FAIL;
 }

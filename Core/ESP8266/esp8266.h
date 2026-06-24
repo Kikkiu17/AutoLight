@@ -79,5 +79,6 @@ Response_t WIFI_MQTT_ConnectBroker(WIFI_t* wifi, const char* broker_ip, uint16_t
 Response_t WIFI_MQTT_Subscribe(WIFI_t* wifi, const char* topic, uint8_t qos);
 Response_t WIFI_MQTT_Publish(WIFI_t* wifi, const char* topic, const char* payload, uint8_t qos, uint8_t retain);
 Response_t WIFI_MQTT_Receive(WIFI_t* wifi, char* topic_out, char* payload_out, uint32_t timeout);
+Response_t WIFI_MQTT_IsConnected(WIFI_t* wifi);
 
 #endif /* ESP8266_ESP8266_H_ */

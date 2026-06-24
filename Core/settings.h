@@ -75,6 +75,9 @@ static const char ESP_NAME[] = "SNSE device";
 #define SERVER_PORT 34677
 
 static const char ESP_HOSTNAME[] = "SNSEDEVICEACF3"; // template: SNSEDEVICExxxx
+static const char MQTT_BROKER_IP[] = "192.168.1.2";
+static const uint16_t MQTT_BROKER_PORT = 1883;
+static const uint16_t MQTT_PUBLISH_INTERVAL = 1000;	// ms
 
 #define AT_SHORT_TIMEOUT 250
 #define AT_MEDIUM_TIMEOUT 500
@@ -224,7 +227,7 @@ static const char MQTT_DISCOVERY_LIGHT[] =
  * Hostname, Topic_ID, Hostname, NomeDevice
  */
 static const char MQTT_DISCOVERY_SENSOR[] = 
-"{\"name\":\"%s\",\"stat_t\":\"snse/%s/%s/state\",\"unit_of_meas\":\"%s\",\"dev_cla\":\"%s\",\"uniq_id\":\"%s_%s\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"%s\"}}";
+"{\"name\":\"%s\",\"stat_t\":\"snse/%s/%s/state\",\"unit_of_meas\":\"%s\",\"dev_cla\":\"%s\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_%s\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"%s\"}}";
 
 static const char OVERTEMP_TEXT[] = "Temperatura massima superata, rele\' aperto";
 static const char OVERLOAD_TEXT[] = "Potenza massima superata, rele\' aperto";

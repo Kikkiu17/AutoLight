@@ -183,22 +183,19 @@ int main(void)
   memcpy(wifi.pw, password, strlen(password));
   HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 1);
   uint32_t connect_status = WIFI_Connect(&wifi);
-  if (connect_status == FAIL || connect_status == ERROR)
+  if (connect_status == OK)
   {
-    // try again
-    NVIC_SystemReset();
+    WIFI_EnableNTPServer(&wifi, 2);
+    /*
+    The first time the ESP connects to WiFi, the gateway assigns an IP to it, which now gets saved to FLASH.
+    The next time the ESP connects, the gateway could assign a different IP; to prevent this, the function
+    WIFI_SetIP(&wifi, savedata.ip); loads the IP previously saved on FLASH so that the ESP tries to connect
+    and get this IP
+    */
+    strncpy(savedata.ip, wifi.IP, 15);
+    FLASH_WriteSaveData();
   }
   HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 0);
-  WIFI_EnableNTPServer(&wifi, 2);
-
-  /*
-  The first time the ESP connects to WiFi, the gateway assigns an IP to it, which now gets saved to FLASH.
-  The next time the ESP connects, the gateway could assign a different IP; to prevent this, the function
-  WIFI_SetIP(&wifi, savedata.ip); loads the IP previously saved on FLASH so that the ESP tries to connect
-  and get this IP
-  */
-  strncpy(savedata.ip, wifi.IP, 15);
-  FLASH_WriteSaveData();
 
   SWITCH_Init(&(switches[RELAY_SWITCH]), false, RLY_GPIO_Port, RLY_Pin);
 
@@ -206,10 +203,13 @@ int main(void)
 
   __HAL_TIM_ENABLE(&htim1);
 
-  if (WIFIHANDLER_MQTT_Init(&wifi, "192.168.1.2", 1883) == OK) 
+  if (connect_status == OK)
   {
-      WIFIHANDLER_MQTT_PublishDiscovery(&wifi);
-      WIFIHANDLER_MQTT_PublishStates(&wifi);
+    if (WIFIHANDLER_MQTT_Init(&wifi, MQTT_BROKER_IP, MQTT_BROKER_PORT) == OK) 
+    {
+        WIFIHANDLER_MQTT_PublishDiscovery(&wifi);
+        WIFIHANDLER_MQTT_PublishStates(&wifi);
+    }
   }
 
   uint32_t last_mqtt_publish = 0;
@@ -330,7 +330,9 @@ int main(void)
     WIFIHANDLER_MQTT_Loop(&wifi);
     HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_RESET);
 
-    if (HAL_GetTick() - last_mqtt_publish > 1000) 
+    WIFIHANDLER_ReconnectIfDisconnected(&wifi);
+
+    if (HAL_GetTick() - last_mqtt_publish > MQTT_PUBLISH_INTERVAL) 
     {
         last_mqtt_publish = HAL_GetTick();
         WIFIHANDLER_MQTT_PublishStates(&wifi);

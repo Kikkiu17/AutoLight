@@ -24,4 +24,7 @@ void WIFIHANDLER_MQTT_Loop(WIFI_t* wifi);
 
 void WIFIHANDLER_MQTT_SendNotification(WIFI_t* wifi, const char* message);
 
+#define RECONNECT_CHECK_INTERVAL 60000 // in milliseconds
+Response_t WIFIHANDLER_ReconnectIfDisconnected(WIFI_t *wifi);
+
 #endif /* WIFIHANDLER_WIFIHANDLER_H_ */

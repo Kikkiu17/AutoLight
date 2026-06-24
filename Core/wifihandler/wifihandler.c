@@ -33,6 +33,30 @@ void SWITCH_UnPress(Switch_t* sw)
 	HAL_GPIO_WritePin(sw->port, sw->pin, sw->inverted);
 }
 
+static uint32_t reconnect_time = 0;
+
+Response_t WIFIHANDLER_ReconnectIfDisconnected(WIFI_t *wifi)
+{
+    Response_t status = WAITING;
+    if (HAL_GetTick() - reconnect_time > RECONNECT_CHECK_INTERVAL)
+    {
+        reconnect_time = HAL_GetTick();
+        status = WIFI_Connect(wifi);
+        if (status == OK)
+        {
+            if (WIFI_MQTT_IsConnected(wifi) != OK)
+            {
+                if (WIFIHANDLER_MQTT_Init(wifi, MQTT_BROKER_IP, MQTT_BROKER_PORT) == OK)
+                {
+                    WIFIHANDLER_MQTT_PublishDiscovery(wifi);
+                    WIFIHANDLER_MQTT_PublishStates(wifi);
+                }
+            }
+        }
+    }
+    return status;
+}
+
 Response_t WIFIHANDLER_MQTT_Init(WIFI_t* wifi, const char* broker_ip, uint16_t port)
 {
 	// the MQTT client ID is the hostname
