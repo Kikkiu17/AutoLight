@@ -1,8 +1,9 @@
 /*
  * esp8266.h
  *
- *  Created on: Apr 6, 2025
- *      Author: Kikkiu
+ * Created on: Apr 6, 2025
+ * Author: Kikkiu
+ * Modified for: MQTT Client
  */
 
 #ifndef ESP8266_ESP8266_H_
@@ -12,14 +13,7 @@
 #include "usart.h"
 #include "../settings.h"
 
-#define RECONNECT_CHECK_INTERVAL 60000 // in milliseconds
 extern bool WIFI_response_sent;
-
-typedef enum
-{
-	GET 		= 'G',
-	POST 		= 'P'
-} Request_t;
 
 typedef enum
 {
@@ -40,20 +34,12 @@ typedef struct
 	char		hostname[HOSTNAME_MAX_SIZE + 1];
 	char		name[NAME_MAX_SIZE + 1];
 	char		time[8 + 1];	// hh:mm:ss
-	int32_t	last_time_read;
+	int32_t	    last_time_read;
 } WIFI_t;
 
-typedef struct
-{
-	WIFI_t* 	wifi;
-	uint8_t 	connection_number;
- 	Request_t	request_type;
-	char		request[REQUEST_MAX_SIZE + 1];
-	uint32_t	request_size;
-	char		response_buffer[RESPONSE_MAX_SIZE + 1];
-} Connection_t;
-
 int32_t bufferToInt(char* buf, uint32_t size);
+
+void WIFI_Init(WIFI_t* wifi);
 
 Response_t ESP8266_Init(void);
 void ESP8266_ClearBuffer(void);
@@ -62,6 +48,7 @@ void ESP8266_HardwareReset(void);
 Response_t ESP8266_ATReset(void);
 Response_t ESP8266_CheckAT(void);
 Response_t ESP8266_Restore(void);
+Response_t ESP8266_ResetWaitReady(void);
 
 Response_t ESP8266_WaitForStringCNDTROffset(char* str, int32_t offset, uint32_t timeout);
 Response_t ESP8266_WaitForString(char* str, uint32_t timeout);
@@ -72,19 +59,9 @@ Response_t ESP8266_SendATCommandResponse(char* cmd, size_t size, uint32_t timeou
 Response_t ESP8266_SendATCommandKeepString(char* cmd, size_t size, uint32_t timeout);
 Response_t ESP8266_SendATCommandKeepStringNoResponse(char* cmd, size_t size);
 
-/*
-If the ESP is not connected to WiFi, this functions connects it to the WiFi specified by SSID and password
-in the passed WIFI_t struct.
-If it's already connected, it saves the current IP and SSID in the WIFI_t structure.
-Note that this is a blocking function: if not connected to WiFi, it blocks until it connects or it timeouts (15 seconds)
-*/
 Response_t WIFI_Connect(WIFI_t* wifi);
-Response_t WIFI_ReconnectIfDisconnected(WIFI_t* wifi);
 Response_t WIFI_GetConnectionInfo(WIFI_t* wifi);
 Response_t WIFI_SetCWMODE(uint8_t mode);
-Response_t WIFI_SetCIPMUX(uint8_t mux);
-Response_t WIFI_SetCIPSERVER(uint16_t server_port);
-Response_t WIFI_SetConnectionTimeout(uint16_t timeout);
 Response_t WIFI_SetHostname(WIFI_t* wifi, const char* hostname);
 Response_t WIFI_GetHostname(WIFI_t* wifi);
 Response_t WIFI_SetName(WIFI_t* wifi, char* name);
@@ -95,19 +72,12 @@ Response_t WIFI_GetTime(WIFI_t* wifi);
 int32_t WIFI_GetTimeHour(WIFI_t* wifi);
 int32_t WIFI_GetTimeMinutes(WIFI_t* wifi);
 int32_t WIFI_GetTimeSeconds(WIFI_t* wifi);
-
-Response_t WIFI_ReceiveRequest(WIFI_t* wifi, Connection_t* conn, uint32_t timeout);
-Response_t WIFI_SendResponse(Connection_t* conn, char* status_code, char* body, uint32_t body_length);
 Response_t WIFI_EnableNTPServer(WIFI_t* wifi, int8_t time_offset);
-void WIFI_ResetComm(WIFI_t* wifi, Connection_t* conn);
-char* WIFI_RequestHasKey(Connection_t* conn, char* desired_key);
-char* WIFI_RequestKeyHasValue(Connection_t* conn, char* request_key_ptr, char* value);
-char* WIFI_GetKeyValue(Connection_t* conn, char* request_key_ptr, uint32_t* value_size);
-Response_t WIFI_StartServer(WIFI_t* wifi, uint16_t port);
-Response_t ESP8266_ResetWaitReady();
-void WIFI_ResetConnectionIfError(WIFI_t* wifi, Connection_t* conn, Response_t wifistatus);
 
-void WIFI_Init(WIFI_t* wifi);
-void CONN_Init(Connection_t* conn);
+Response_t WIFI_MQTT_Config(WIFI_t* wifi, const char* client_id);
+Response_t WIFI_MQTT_ConnectBroker(WIFI_t* wifi, const char* broker_ip, uint16_t port);
+Response_t WIFI_MQTT_Subscribe(WIFI_t* wifi, const char* topic, uint8_t qos);
+Response_t WIFI_MQTT_Publish(WIFI_t* wifi, const char* topic, const char* payload, uint8_t qos, uint8_t retain);
+Response_t WIFI_MQTT_Receive(WIFI_t* wifi, char* topic_out, char* payload_out, uint32_t timeout);
 
 #endif /* ESP8266_ESP8266_H_ */

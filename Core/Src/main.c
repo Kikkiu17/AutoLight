@@ -20,7 +20,6 @@
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
-#include "stm32g0xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -76,7 +75,6 @@ uint32_t voltage, current_int, current_dec, power;
 uint16_t echo;
 uint32_t sens_distance, last_distance;
 WIFI_t wifi;
-Connection_t conn;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -202,13 +200,19 @@ int main(void)
   strncpy(savedata.ip, wifi.IP, 15);
   FLASH_WriteSaveData();
 
-  WIFI_StartServer(&wifi, SERVER_PORT);
-
   SWITCH_Init(&(switches[RELAY_SWITCH]), false, RLY_GPIO_Port, RLY_Pin);
 
   startup_finished = 1;
 
   __HAL_TIM_ENABLE(&htim1);
+
+  if (WIFIHANDLER_MQTT_Init(&wifi, "192.168.1.2", 1883) == OK) 
+  {
+      WIFIHANDLER_MQTT_PublishDiscovery(&wifi);
+      WIFIHANDLER_MQTT_PublishStates(&wifi);
+  }
+
+  uint32_t last_mqtt_publish = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -304,28 +308,33 @@ int main(void)
       SWITCH_UnPress(&switches[RELAY_SWITCH]);
     }
 
-    WIFI_ReconnectIfDisconnected(&wifi);
+    if (rly_temp > OVERTEMP_THRESHOLD || ldo_temp > OVERTEMP_THRESHOLD)
+    {
+      if (switches[RELAY_SWITCH].pressed) {
+          SWITCH_UnPress(&switches[RELAY_SWITCH]);
+          WIFIHANDLER_MQTT_PublishStates(&wifi);
+          WIFIHANDLER_MQTT_SendNotification(&wifi, (char*)OVERTEMP_TEXT);
+      }
+    }
 
     if (power > MAX_RELAY_POWER)
-      SWITCH_UnPress(&switches[RELAY_SWITCH]);
+    {
+      if (switches[RELAY_SWITCH].pressed) {
+          SWITCH_UnPress(&switches[RELAY_SWITCH]);
+          WIFIHANDLER_MQTT_PublishStates(&wifi);
+          WIFIHANDLER_MQTT_SendNotification(&wifi, (char*)OVERLOAD_TEXT);
+      }
+    }
 
-    Response_t status = WIFI_ReceiveRequest(&wifi, &conn, AT_SHORT_TIMEOUT);
-	  if (status == OK)
-	  {
-      HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_SET);
-		  char* key_ptr = NULL;
-
-      if ((key_ptr = WIFI_RequestHasKey(&conn, "wifi")))
-			  WIFIHANDLER_HandleWiFiRequest(&conn, key_ptr);
-      else if ((key_ptr = WIFI_RequestHasKey(&conn, "switch")))
-			  WIFIHANDLER_HandleSwitchRequest(&conn, key_ptr);
-      else if ((key_ptr = WIFI_RequestHasKey(&conn, "features")))
-				  WIFIHANDLER_HandleFeaturePacket(&conn, (char*)FEATURES_TEMPLATE);
-      else if ((key_ptr = WIFI_RequestHasKey(&conn, "notification")))
-        WIFIHANDLER_HandleNotificationRequest(&conn, key_ptr);
-	  }
-
+    HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_SET);
+    WIFIHANDLER_MQTT_Loop(&wifi);
     HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, GPIO_PIN_RESET);
+
+    if (HAL_GetTick() - last_mqtt_publish > 1000) 
+    {
+        last_mqtt_publish = HAL_GetTick();
+        WIFIHANDLER_MQTT_PublishStates(&wifi);
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

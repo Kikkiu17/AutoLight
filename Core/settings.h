@@ -45,6 +45,9 @@ typedef struct
 #define NUMBER_OF_SWITCHES 1
 #define RELAY_SWITCH 0
 
+#define OVERTEMP_THRESHOLD 85	// °C
+#define OVERLOAD_THRESHOLD 2200	// W
+
 extern Switch_t switches[NUMBER_OF_SWITCHES];
 
 // ==========================================================================================
@@ -71,7 +74,7 @@ typedef uint64_t FLASH_DATATYPE;
 static const char ESP_NAME[] = "SNSE device";
 #define SERVER_PORT 34677
 
-static const char ESP_HOSTNAME[] = "SNSEDEVICE01"; // template: SNSEDEVICExx
+static const char ESP_HOSTNAME[] = "SNSEDEVICEACF3"; // template: SNSEDEVICExxxx
 
 #define AT_SHORT_TIMEOUT 250
 #define AT_MEDIUM_TIMEOUT 500
@@ -101,7 +104,7 @@ static const char ESP_HOSTNAME[] = "SNSEDEVICE01"; // template: SNSEDEVICExx
  * the longest content is usually the FEATURES array, so the minimum size should be the size of
  * FEATURES_TEMPLATE. usually this is the reason of most hard faults, so try increasing it
  */
-#define WIFI_BUF_MAX_SIZE 280
+#define WIFI_BUF_MAX_SIZE 512
 
 /**
  * UART_BUFFER_SIZE
@@ -204,16 +207,26 @@ extern uint16_t ldo_temp, rly_temp;
 extern uint32_t voltage, current_int, current_dec, power;
 extern uint32_t sens_distance;
 
-static const char FEATURES_TEMPLATE[] =
-{
-	"sensor1$Distanza sensore$%dcm;"
-	"sensor2$Tensione$%d V;"
-	//"sensor3$Corrente$%d.%d A;"
-	//"sensor4$Potenza$%d W;"
-	"switch1$Rele',status$%d;"
-	"sensor3$Temperatura LDO$%d °C;"
-	"sensor4$Temperatura RELE'$%d °C;"
-	"timestamp1$Tempo CPU$%d;"
-};
+// ==========================================================================================
+// 										MQTT TEMPLATES (HOME ASSISTANT DISCOVERY)
+// ==========================================================================================
+
+/* Template JSON per registrare l'interruttore (Relè) */
+static const char MQTT_DISCOVERY_SWITCH[] = 
+"{\"name\":\"%s\",\"cmd_t\":\"snse/%s/relay/set\",\"stat_t\":\"snse/%s/relay/state\",\"pl_on\":\"1\",\"pl_off\":\"0\",\"uniq_id\":\"%s_relay\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"%s\"}}";
+
+/* Template JSON specifico per registrare una Luce (Componente light) */
+static const char MQTT_DISCOVERY_LIGHT[] = 
+"{\"name\":\"%s\",\"cmd_t\":\"snse/%s/relay/set\",\"stat_t\":\"snse/%s/relay/state\",\"payload_on\":\"1\",\"payload_off\":\"0\",\"uniq_id\":\"%s_light\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"%s\"}}";
+
+/* Template JSON per registrare un sensore generico (Tensione, Corrente, Potenza)
+ * Parametri: Nome, Hostname, Topic(volt/curr/pow), Unità(V/A/W), DeviceClass(voltage/current/power), 
+ * Hostname, Topic_ID, Hostname, NomeDevice
+ */
+static const char MQTT_DISCOVERY_SENSOR[] = 
+"{\"name\":\"%s\",\"stat_t\":\"snse/%s/%s/state\",\"unit_of_meas\":\"%s\",\"dev_cla\":\"%s\",\"uniq_id\":\"%s_%s\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"%s\"}}";
+
+static const char OVERTEMP_TEXT[] = "Temperatura massima superata, rele\' aperto";
+static const char OVERLOAD_TEXT[] = "Potenza massima superata, rele\' aperto";
 
 #endif /* SETTINGS_H_ */

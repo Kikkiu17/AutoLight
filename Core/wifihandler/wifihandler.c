@@ -1,20 +1,13 @@
 /*
- * wifi.c
+ * wifihandler.c
  *
- *  Created on: Apr 12, 2025
- *      Author: Kikkiu
+ * Modified for: Home Assistant MQTT
  */
 
 #include "wifihandler.h"
 #include "../Flash/flash.h"
-
-Notification_t notification =
-{
-	.text = NULL,
-	.size = 0,
-	.read = 0,
-	.clear_if_read = true
-};
+#include <stdio.h>
+#include <string.h>
 
 Switch_t switches[NUMBER_OF_SWITCHES];
 
@@ -40,159 +33,106 @@ void SWITCH_UnPress(Switch_t* sw)
 	HAL_GPIO_WritePin(sw->port, sw->pin, sw->inverted);
 }
 
-Response_t WIFIHANDLER_HandleSwitchRequest(Connection_t* conn, char* key_ptr)
+Response_t WIFIHANDLER_MQTT_Init(WIFI_t* wifi, const char* broker_ip, uint16_t port)
 {
-	uint32_t vaL_size = 0;
-	char* val = WIFI_GetKeyValue(conn, key_ptr, &vaL_size);
-	if (val == NULL || vaL_size > 1)
-		return WIFI_SendResponse(conn, "400 Bad Request", "", 104);
-	uint8_t id = *val - '0';
-	if (id > NUMBER_OF_SWITCHES || id == 0) return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-
-	if (conn->request_type == GET)
-	{
-		char status = switches[id - 1].pressed + '0';
-		return WIFI_SendResponse(conn, "200 OK", &status, 1);
-	}
-	else
-	{
-		char* cmd_ptr = NULL;
-		if ((cmd_ptr = WIFI_RequestHasKey(conn, "cmd")))
-		{
-			val = WIFI_GetKeyValue(conn, cmd_ptr, &vaL_size);
-			if (val == NULL || vaL_size > 1)
-				return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-
-			if (*val - '0' == 1)
-			{
-				switches[id - 1].manual = true;
-				SWITCH_Press(&(switches[id - 1]));
-			}
-			else if (*val - '0' == 0)
-			{
-				switches[id - 1].manual = false;
-				SWITCH_UnPress(&(switches[id - 1]));
-			}
-		}
-	}
-
+	// the MQTT client ID is the hostname
+	if (WIFI_MQTT_Config(wifi, wifi->hostname) != OK) return ERR;
+	
+	if (WIFI_MQTT_ConnectBroker(wifi, broker_ip, port) != OK) return ERR;
+	
+	char sub_topic[64];
+	snprintf(sub_topic, 64, "snse/%s/relay/set", wifi->hostname);
+	WIFI_MQTT_Subscribe(wifi, sub_topic, 1);
+	
 	return OK;
 }
 
-void NOTIFICATION_Set(char* text, uint8_t size)
+void WIFIHANDLER_MQTT_PublishDiscovery(WIFI_t* wifi)
 {
-	notification.text = text;
-	notification.size = size;
-	notification.read = false;
+	char topic[128];
+	char payload[WIFI_BUF_MAX_SIZE];
+	// DISCOVERY
+	
+	// RELAY
+	snprintf(topic, 128, "homeassistant/light/%s_relay/config", wifi->hostname);
+	snprintf(payload, WIFI_BUF_MAX_SIZE, MQTT_DISCOVERY_LIGHT, 
+		"Relè Presa", wifi->hostname, wifi->hostname, wifi->hostname, wifi->hostname, ESP_NAME);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
+	
+	// DISTANCE
+	snprintf(topic, 128, "homeassistant/sensor/%s_dist/config", wifi->hostname);
+	snprintf(payload, WIFI_BUF_MAX_SIZE, MQTT_DISCOVERY_SENSOR, 
+		"Distanza sensore", wifi->hostname, "dist", "cm", "distance", wifi->hostname, "dist", wifi->hostname, ESP_NAME);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1); 
+
+	// LDO TEMP
+	snprintf(topic, 128, "homeassistant/sensor/%s_templdo/config", wifi->hostname);
+	snprintf(payload, WIFI_BUF_MAX_SIZE, MQTT_DISCOVERY_SENSOR, 
+		"Temperatura LDO", wifi->hostname, "templdo", "°C", "temperature", wifi->hostname, "templdo", wifi->hostname, ESP_NAME);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
+
+	// RELAY TEMP
+	snprintf(topic, 128, "homeassistant/sensor/%s_temprly/config", wifi->hostname);
+	snprintf(payload, WIFI_BUF_MAX_SIZE, MQTT_DISCOVERY_SENSOR, 
+		"Temperatura RELE\'", wifi->hostname, "temprly", "°C", "temperature", wifi->hostname, "temprly", wifi->hostname, ESP_NAME);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
 }
 
-void NOTIFICATION_Reset()
+void WIFIHANDLER_MQTT_PublishStates(WIFI_t* wifi)
 {
-	notification.text = NULL;
-	notification.size = 0;
-	notification.read = true;
+	char topic[128];
+	char payload[16];
+	
+	// RELAY
+	snprintf(topic, 128, "snse/%s/relay/state", wifi->hostname);
+	WIFI_MQTT_Publish(wifi, topic, switches[RELAY_SWITCH].pressed ? "1" : "0", 1, 1);
+	
+	// DISTANCE
+	snprintf(topic, 128, "snse/%s/dist/state", wifi->hostname);
+	snprintf(payload, 16, "%lu", sens_distance);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
+
+	// LDO TEMP
+	snprintf(topic, 128, "snse/%s/templdo/state", wifi->hostname);
+	snprintf(payload, 16, "%d", ldo_temp);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
+
+	// RELAY TEMP
+	snprintf(topic, 128, "snse/%s/temprly/state", wifi->hostname);
+	snprintf(payload, 16, "%d", rly_temp);
+	WIFI_MQTT_Publish(wifi, topic, payload, 1, 1);
 }
 
-Response_t WIFIHANDLER_HandleNotificationRequest(Connection_t* conn, char* key_ptr)
+void WIFIHANDLER_MQTT_Loop(WIFI_t* wifi)
 {
-	if (conn->request_type == GET)
-	{
-		if (notification.size == 0 || notification.text == NULL)
-			return WIFI_SendResponse(conn, "200 OK", "Vuoto", 5);
-		else
-		{
-			return WIFI_SendResponse(conn, "200 OK", notification.text, notification.size);
-			if (notification.clear_if_read)
-				NOTIFICATION_Reset();
-			else
-				notification.read = true;
-		}
-	}
-
-	return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
+    char topic_in[64];
+    char payload_in[64];
+    
+    if (WIFI_MQTT_Receive(wifi, topic_in, payload_in, 1) == OK)
+    {
+        char expected_topic[64];
+        snprintf(expected_topic, 64, "snse/%s/relay/set", wifi->hostname);
+        
+        if (strstr(topic_in, expected_topic) != NULL)
+        {
+            if (strncmp(payload_in, "1", 1) == 0)
+                SWITCH_Press(&switches[RELAY_SWITCH]);
+            else if (strncmp(payload_in, "0", 1) == 0)
+                SWITCH_UnPress(&switches[RELAY_SWITCH]);
+            
+			ESP8266_ClearBuffer();
+			
+			char topic_out[128];
+			snprintf(topic_out, 128, "snse/%s/relay/state", wifi->hostname);
+			WIFI_MQTT_Publish(wifi, topic_out, switches[RELAY_SWITCH].pressed ? "1" : "0", 1, 1);
+        }
+        ESP8266_ClearBuffer();
+    }
 }
 
-Response_t WIFIHANDLER_HandleWiFiRequest(Connection_t* conn, char* command_ptr)
+void WIFIHANDLER_MQTT_SendNotification(WIFI_t* wifi, const char* message)
 {
-	if (conn->request_type == POST)
-	{
-		if (WIFI_RequestKeyHasValue(conn, command_ptr, "changename"))
-		{
-			char* name_ptr = WIFI_RequestHasKey(conn, "name");
-			if (name_ptr == NULL)
-				return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-			else
-			{
-				uint32_t name_size = 0;
-				name_ptr = WIFI_GetKeyValue(conn, name_ptr, &name_size);
-				if (name_ptr == NULL)
-					return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-				else
-				{
-					WIFI_SetName(conn->wifi, name_ptr);
-#ifdef ENABLE_SAVE_TO_FLASH
-					FLASH_WriteSaveData();	// save name
-#endif
-					return WIFI_SendResponse(conn, "200 OK", "", 0);
-				}
-			}
-
-		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-	}
-	else if (conn->request_type == GET)
-	{
-		if (WIFI_RequestKeyHasValue(conn, command_ptr, "SSID"))
-		{
-			return WIFI_SendResponse(conn, "200 OK", conn->wifi->SSID, strlen(conn->wifi->SSID));
-		}
-		else if (WIFI_RequestKeyHasValue(conn, command_ptr, "IP"))
-		{
-			return WIFI_SendResponse(conn, "200 OK", conn->wifi->IP, strlen(conn->wifi->IP));
-		}
-		else if (WIFI_RequestKeyHasValue(conn, command_ptr, "ID"))
-		{
-			return WIFI_SendResponse(conn, "200 OK", conn->wifi->hostname, strlen(conn->wifi->hostname));
-		}
-		else if (WIFI_RequestKeyHasValue(conn, command_ptr, "name"))
-		{
-			return WIFI_SendResponse(conn, "200 OK", conn->wifi->name, strlen(conn->wifi->name));
-		}
-		else if (WIFI_RequestKeyHasValue(conn, command_ptr, "buf"))
-		{
-			// this is possible if RESPONSE_MAX_SIZE is at least as big as WIFI_BUF_MAX_SIZE
-			if (RESPONSE_MAX_SIZE < WIFI_BUF_MAX_SIZE)
-			{
-				return WIFI_SendResponse(conn, "500 Internal server error", "", 0);
-			}
-			else
-				return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, sizeof(conn->wifi->buf));
-		}
-		else if (WIFI_RequestKeyHasValue(conn, command_ptr, "conn"))
-		{
-			sprintf(conn->wifi->buf, "Connection ID: %d\nrequest size: %" PRIu32
-					"\nrequest: %s", conn->connection_number, conn->request_size, conn->request);
-			return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, strlen(conn->wifi->buf));
-		}
-		else return WIFI_SendResponse(conn, "400 Bad Request", "", 0);
-	}
-
-	return ERR;
+    char topic[128];
+    snprintf(topic, 128, "snse/%s/notify", wifi->hostname);
+    WIFI_MQTT_Publish(wifi, topic, message, 1, 0);
 }
-
-Response_t WIFIHANDLER_HandleFeaturePacket(Connection_t* conn, char* features_template)
-{
-	memset(conn->wifi->buf, 0, WIFI_BUF_MAX_SIZE);
-	snprintf(conn->wifi->buf, WIFI_BUF_MAX_SIZE, features_template,
-			sens_distance,
-			voltage,
-			//current_int, current_dec,
-			//power,
-			switches[RELAY_SWITCH].pressed,
-			ldo_temp,
-			rly_temp,
-			uwTick
-	);
-	return WIFI_SendResponse(conn, "200 OK", conn->wifi->buf, strlen(conn->wifi->buf));
-}
-

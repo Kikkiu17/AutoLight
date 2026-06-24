@@ -1,8 +1,9 @@
 /*
  * esp8266.c
  *
- *  Created on: Apr 6, 2025
- *      Author: Kikkiu
+ * Created on: Apr 6, 2025
+ * Author: Kikkiu
+ * Modified for: MQTT Client
  */
 
 #include "esp8266.h"
@@ -18,10 +19,6 @@
 #include <time.h>
 
 #define CWMODE_MAX_SIZE 14
-#define CIPMUX_MAX_SIZE 14
-#define CIPSERVER_MAX_SIZE 50
-#define CIPSTO_MAX_SIZE 17	// should be 16 but the compiler whines about it...
-
 #define CIPSTA_IP_OFFSET 12
 
 #define CWSTATE_STATE_OFFSET 9
@@ -35,28 +32,12 @@
 
 volatile char uart_buffer[UART_BUFFER_SIZE + 1];
 bool WIFI_response_sent = false;
-uint32_t reconnect_time = 0;
 
 void WIFI_Init(WIFI_t* wifi)
 {
 	if (wifi == NULL)
 		return;
 	memset(wifi, 0, sizeof(WIFI_t));
-}
-
-void CONN_Init(Connection_t* conn)
-{
-	if (conn == NULL)
-		return;
-	memset(conn, 0, sizeof(Connection_t));
-}
-
-void WIFI_ResetComm(WIFI_t* wifi, Connection_t* conn)
-{
-	ESP8266_ClearBuffer();
-	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
-	memset(conn->request, 0, REQUEST_MAX_SIZE);
-	memset(conn->response_buffer, 0, RESPONSE_MAX_SIZE);
 }
 
 int32_t bufferToInt(char* buf, uint32_t size)
@@ -105,7 +86,6 @@ Response_t ESP8266_WaitForString(char* str, uint32_t timeout)
 	{
 		HAL_Delay(1);
 
-		// strstr((char*)uart_buffer, "FAIL") is to handle failed WiFi connections
 		if (strstr((char*)uart_buffer, "FAIL"))
 		{
 			ESP8266_ClearBuffer();
@@ -198,7 +178,7 @@ void ESP8266_ClearBuffer(void)
 {
 	LL_DMA_DisableChannel(UART_DMA_TYPEDEF, UART_DMA_LL_CHANNEL);
 	memset((char*)uart_buffer, 0, UART_BUFFER_SIZE + 1 - UART_DMA_CHANNEL_HANDLE->CNDTR);
-	UART_DMA_CHANNEL_HANDLE->CNDTR = UART_BUFFER_SIZE;		// reset CNDTR so DMA starts writing from index 0
+	UART_DMA_CHANNEL_HANDLE->CNDTR = UART_BUFFER_SIZE;
 	__HAL_UART_CLEAR_OREFLAG(&STM_UART);
     __HAL_UART_CLEAR_NEFLAG(&STM_UART);
     __HAL_UART_CLEAR_FEFLAG(&STM_UART);
@@ -217,21 +197,6 @@ void ESP8266_Reset(void)
 	HAL_GPIO_WritePin(ESP_RST_PORT, ESP_RST_PIN, 1);
 }
 
-Response_t WIFI_StartServer(WIFI_t* wifi, uint16_t port)
-{
-	Response_t atstatus = ESP8266_CheckAT();
-	if (atstatus != OK) return atstatus;
-	/**
-	 * if some of the following commands return something other than OK, it could mean that
-	 * the server is already set up, so we can continue the boot
-	*/
-	WIFI_SetCWMODE(1);
-	WIFI_SetCIPMUX(1);
-	WIFI_SetCIPSERVER(port);
-	WIFI_SetConnectionTimeout(10);
-	return atstatus;
-}
-
 Response_t ESP8266_ResetWaitReady(void)
 {
 	uint8_t attempt_number = 0;
@@ -241,6 +206,7 @@ Response_t ESP8266_ResetWaitReady(void)
 		if (START_ATTEMPTS != -1 && attempt_number > START_ATTEMPTS)
 			return TIMEOUT;
 		attempt_number++;
+		ESP8266_SendATCommandKeepString("AT+RST\r\n", 8, AT_SHORT_TIMEOUT);
 		// hardware reset
 		HAL_GPIO_WritePin(ESP_RST_PORT, ESP_RST_PIN, 0);
 		HAL_Delay(1);
@@ -249,7 +215,7 @@ Response_t ESP8266_ResetWaitReady(void)
 		HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 1);
 		start_ok = ESP8266_WaitForStringCNDTROffset("ready", -7, 5000);
 		HAL_GPIO_WritePin(STATUS_Port, STATUS_Pin, 0);
-		__HAL_UART_CLEAR_OREFLAG(&huart1);	// clear overrun flag caused by esp reset
+		__HAL_UART_CLEAR_OREFLAG(&huart1);
 		ESP8266_ClearBuffer();
 	}
 
@@ -274,25 +240,15 @@ Response_t ESP8266_Restore(void)
 
 Response_t WIFI_GetIP(WIFI_t* wifi)
 {
-	// get ESP IP
-	// response structure:
-	// +CIFSR:STAIP,"nnn.nnn.nnn.nnn"\r\n
-	// +CIFSR:STAMAC,"nn:nn:nn:nn:nn:nn"\r\n
-
 	ESP8266_ClearBuffer();
 	Response_t atstatus = ESP8266_SendATCommandKeepString("AT+CIFSR\r\n", 10, AT_SHORT_TIMEOUT);
 	if (atstatus != OK) return atstatus;
 
-	//ptr = strstr((char*)uart_buffer, "+CIFSR:STAIP");
-	//				v
-	// +CIFSR:STAIP,"nnn.nnn.nnn.nnn"\r\n
 	char* ptr = strstr((char*)uart_buffer, "\"");
 	if (ptr == NULL) return ERR;
 
 	uint32_t IP_start_index = (ptr + 1) - uart_buffer;
 
-	//								v
-	// +CIFSR:STAIP,"nnn.nnn.nnn.nnn"\r\n
 	ptr = strstr((char*)uart_buffer, "\"\r\n");
 	if (ptr == NULL) return ERR;
 
@@ -313,22 +269,14 @@ Response_t WIFI_GetConnectionInfo(WIFI_t* wifi)
 		return ERR;
 	
 	char* ptr = strstr((char*)uart_buffer, "+CWSTATE:");
-	if (ptr == NULL) return ERR;	// unknown response
+	if (ptr == NULL) return ERR;
 
 	if (*(ptr + CWSTATE_STATE_OFFSET) - '0' != CWSTATE_CONNECTED_WITHIP)
 		return ERR;
 
-	//			   v
-	// +CWSTATE:x,"xxxxxxxxxxxx"\r\n
 	uint32_t SSID_start_index = (ptr + CWSTATE_SSID_OFFSET) - uart_buffer;
 
-	// get ESP SSID
-	// response structure:
-	// +CWSTATE:x,"xxxxxxxxxxxx"\r\n
-
-	//					   	   v
-	// +CWSTATE:x,"xxxxxxxxxxxx"\r\n
-	ptr = strstr((char*)uart_buffer, "\"\r\n");	// ptr -1 is the end index of the SSID
+	ptr = strstr((char*)uart_buffer, "\"\r\n");
 	if (ptr == NULL) return ERR;
 
 	uint32_t SSID_end_index = (ptr - 1) - uart_buffer;
@@ -351,17 +299,13 @@ Response_t WIFI_Connect(WIFI_t* wifi)
 	result = ESP8266_SendATCommandKeepString("AT+CWSTATE?\r\n", 13, 5000);
 	if (result != OK) return result;
 
-	// response: AT+CWSTATE?\r\n+CWSTATE:0,""\r\n
-
 	char *ptr = strstr((char*)uart_buffer, "+CWSTATE:");
 	if (!ptr) return ERR;
 
 	int state = *(ptr + CWSTATE_IP_OFFSET) - '0';
 
-	// if ESP is still connecting, wait for it
 	if (state == CWSTATE_CONNECTING)
 	{
-		// wait for connection
 		if (ESP8266_WaitKeepString("WIFI CONNECTED", 9000) == OK)
 		{
 			if (ESP8266_WaitForString("WIFI GOT IP", 18000) != OK)
@@ -373,7 +317,6 @@ Response_t WIFI_Connect(WIFI_t* wifi)
 	}
 	else if (state == CWSTATE_CONNECTED_WITHOUTIP)
 	{
-		// wait for IP
 		if (ESP8266_WaitForString("WIFI GOT IP", 18000) != OK)
 			return FAIL;
 		else
@@ -382,22 +325,17 @@ Response_t WIFI_Connect(WIFI_t* wifi)
 
 	if (state == CWSTATE_NOAP || state == CWSTATE_DISCONNECTED)
 	{
-		// ESP is not connected
-		// connect the ESP to WiFi
-
 		ESP8266_SendATCommandResponse("AT+CWAUTOCONN=0\r\n", 17, AT_SHORT_TIMEOUT); 
 		ESP8266_SendATCommandResponse("AT+CWQAP\r\n", 10, AT_SHORT_TIMEOUT);
 
-		// set ESP as STATION
 		if (WIFI_SetCWMODE(1) != OK) return FAIL;
-		// set the hostname
+		
 		snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+CWHOSTNAME=\"%s\"\r\n", ESP_HOSTNAME);
 		if (ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), AT_SHORT_TIMEOUT) != OK) return FAIL;
 
 		snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+CWJAP=\"%s\",\"%s\"\r\n", wifi->SSID, wifi->pw);
 		ESP8266_SendATCommandNoResponse(wifi->buf, strlen(wifi->buf), 15000);
 
-		// wait for WiFi
 		if (ESP8266_WaitKeepString("WIFI CONNECTED", 9000) == OK)
 		{
 			if (ESP8266_WaitForString("WIFI GOT IP", 18000) != OK)
@@ -407,7 +345,6 @@ Response_t WIFI_Connect(WIFI_t* wifi)
 				return ERR;
 			else
 			{
-				// set the obtained IP as static
 				snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+CIPSTA=\"%s\"\r\n", wifi->IP);
 				return ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), 5000);
 			}
@@ -424,18 +361,6 @@ Response_t WIFI_Connect(WIFI_t* wifi)
 	return ERR;
 }
 
-Response_t WIFI_ReconnectIfDisconnected(WIFI_t *wifi)
-{
-	Response_t status = WAITING;
-	if (uwTick - reconnect_time > RECONNECT_CHECK_INTERVAL)
-	{
-		status = WIFI_Connect(wifi);
-		reconnect_time = uwTick;
-	}
-
-	return status;
-}
-
 Response_t WIFI_SetCWMODE(uint8_t mode)
 {
 	if (mode > 3) return ERR;
@@ -444,39 +369,6 @@ Response_t WIFI_SetCWMODE(uint8_t mode)
 	memset(cwmode, 0, CWMODE_MAX_SIZE + 1);
 	snprintf(cwmode, CWMODE_MAX_SIZE, "AT+CWMODE=%c\r\n", (char)(mode + '0'));
 	return ESP8266_SendATCommandResponse(cwmode, CWMODE_MAX_SIZE, AT_SHORT_TIMEOUT);
-}
-
-Response_t WIFI_SetCIPMUX(uint8_t mux)
-{
-	if (mux > 1) return ERR;
-
-	char cipmux[CIPMUX_MAX_SIZE + 1];
-	memset(cipmux, 0, CIPMUX_MAX_SIZE + 1);
-	snprintf(cipmux, CIPMUX_MAX_SIZE, "AT+CIPMUX=%c\r\n", (char)(mux + '0'));
-	return ESP8266_SendATCommandResponse(cipmux, CIPMUX_MAX_SIZE, AT_SHORT_TIMEOUT);
-}
-
-Response_t WIFI_SetCIPSERVER(uint16_t server_port)
-{
-	// for some reason ESP AT doesn't receive connections if the server port is 80
-	if (server_port < 1 || server_port > 65535 || server_port == 80)
-		return ERR;
-
-	char cipserver[CIPSERVER_MAX_SIZE + 1];
-	memset(cipserver, 0, CIPSERVER_MAX_SIZE + 1);
-	snprintf(cipserver, CIPSERVER_MAX_SIZE, "AT+CIPSERVER=1,%d\r\n", server_port);
-	return ESP8266_SendATCommandResponse(cipserver, strlen(cipserver), AT_SHORT_TIMEOUT);
-}
-
-// timeout is in seconds
-Response_t WIFI_SetConnectionTimeout(uint16_t timeout)
-{
-	if (timeout > 7200) return ERR;
-
-	char timeout_str[CIPSTO_MAX_SIZE + 1];
-	memset(timeout_str, 0, CIPSTO_MAX_SIZE + 1);
-	snprintf(timeout_str, CIPSTO_MAX_SIZE, "AT+CIPSTO=%d\r\n", timeout);
-	return ESP8266_SendATCommandResponse(timeout_str, strlen(timeout_str), AT_SHORT_TIMEOUT);
 }
 
 Response_t WIFI_SetHostname(WIFI_t* wifi, const char* hostname)
@@ -503,11 +395,9 @@ Response_t WIFI_GetHostname(WIFI_t* wifi)
 	Response_t atstatus = ESP8266_SendATCommandKeepString("AT+CWHOSTNAME?\r\n", 16, AT_SHORT_TIMEOUT);
 	if (atstatus != OK) return atstatus;
 
-	// +CWHOSTNAME:ESP-A0ADE6
 	char* ptr = strstr((char*)uart_buffer, "+CWHOSTNAME:");
 	if (ptr == NULL) return ERR;
-	//			   v
-	// +CWHOSTNAME:ESP-A0ADE6\r\n
+	
 	char* hostname_start_p = ptr + 12;
 	ptr = strstr(hostname_start_p, "\r\n");
 	if (ptr == NULL) return ERR;
@@ -524,12 +414,10 @@ Response_t WIFI_GetHostname(WIFI_t* wifi)
 	return OK;
 }
 
-// also saves the name in FLASH memory
 Response_t WIFI_SetName(WIFI_t* wifi, char* name)
 {
 	if (wifi == NULL) return ERR;
 	if (name == NULL) return NULVAL;
-	// 32 == '!'; 126 == '~'
 	if (name[0] < 32 || name[0] > 126) return ERR;
 
 	uint32_t name_size = strnlen(name, NAME_MAX_SIZE);
@@ -550,7 +438,6 @@ Response_t WIFI_SetIP(WIFI_t* wifi, char* ip)
 	if (wifi == NULL || ip == NULL || ip[0] < '0' || ip[0] > '9') return ERR;
 
 	uint32_t ip_length = strlen(ip);
-	// 255.255.255.255
 	if (ip_length > 15) return ERR;
 
 	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
@@ -559,197 +446,9 @@ Response_t WIFI_SetIP(WIFI_t* wifi, char* ip)
 	return atstatus;
 }
 
-Response_t WIFI_ReceiveRequest(WIFI_t* wifi, Connection_t* conn, uint32_t timeout)
-{
-	if (wifi == NULL || conn == NULL) return NULVAL;
-
-	conn->wifi = wifi;
-	char* ptr = NULL;
-	char* ipd_ptr = NULL;
-
-	uint32_t start_time = uwTick;
-	while (1)
-	{
-		if (uwTick - start_time > timeout) return TIMEOUT;
-
-		if (uart_buffer[0] == '\0')
-		{
-			/**
-			 * the buffer could have been cleared after the first DMA read. if this happens,
-			 * the first item of the DMA buffer will be 0x00. if this is so, check for an incoming
-			 * connection from the second element
-			 */
-			if ((ipd_ptr = strstr((char*)uart_buffer + 1, "+IPD,")) != NULL) break;
-		}
-		else
-		{
-			/**
-			 * if the first element of the buffer is not 0x00, check for an incoming connection
-			 * from the start
-			 */
-			if ((ipd_ptr = strstr((char*)uart_buffer, "+IPD,")) != NULL) break;
-		}
-	}
-
-	/**
-	 * wait to receive the connection number n and message size m
-	 * 		   v
-	 * +IPD,n,m:xxxxxxxxxx
-	 */
-	start_time = uwTick;
-	while ((ptr = strstr(ipd_ptr, ":")) == NULL)
-	{
-		if (uwTick - start_time > timeout) return TIMEOUT;
-		__asm__("nop");
-	}
-
-	uint32_t expected_size = 0;
-	//		  v-->v
-	// +IPD,n,xxxxx:xxxxxxxxxx
-	char* expected_size_end_p = ptr;
-	uint8_t num_size = expected_size_end_p - (ipd_ptr + 7);
-	expected_size = bufferToInt(ipd_ptr + 7, num_size);
-
-	start_time = uwTick;
-	uint32_t string_len = 0;
-	while (string_len < expected_size)
-	{
-		// wait until the expected number of bytes m is received
-		if (uwTick - start_time > timeout) return TIMEOUT;
-		string_len = strlen(ptr + 1);
-		if (/*string_len > expected_size || */ptr + 1 - uart_buffer + string_len >= UART_BUFFER_SIZE - 1)
-		{
-			/**
-			 * if more bytes are received than the expected or the buffer is full,
-			 * clear the buffer and return an error
-			 */
-			ESP8266_ClearBuffer();
-			return ERR;
-		}
-	}
-
-	//		v
-	// +IPD,n,m:xxxxxxxxxx
-	conn->connection_number = *(ipd_ptr + 5) - '0';
-
-	//		   v
-	// +IPD,n,m:xxxxxxxxxx
-	ptr = strstr((char*)uart_buffer, ":");
-	if (ptr == NULL) return ERR;
-
-	//			v
-	// +IPD,n,m:GET ?xxxxxxxxxx
-	// +IPD,n,m:POST ?xxxxxxxxxx
-	conn->request_type = *(ptr + 1);
-
-	//				v
-	// +IPD,n,m:GET ?xxxxxxxxxx
-	ptr = strstr((char*)uart_buffer, "?");
-	if (ptr == NULL)
-	{
-		//				v
-		// +IPD,n,m:GET /xxxxxxxxxx
-		ptr = strstr((char*)uart_buffer, "/");
-		if (ptr == NULL) return ERR;
-	}
-
-	//				 v
-	// +IPD,n,m:GET ?xxxxxxxxxx
-	uint32_t request_body_start_index = (ptr + 1) - uart_buffer;
-
-	// get the request size
-	uint32_t request_size;
-	ptr = strstr((char*)uart_buffer, " HTTP");
-	if (ptr == NULL)
-	{
-		// if there is no HTTP/x.x use the message size m (at ptr + 7)
-		// +IPD,n,m:GET ?xxxxxxxxxx
-		request_size = expected_size;
-		uint32_t request_start_index;
-		if ((ptr = strstr((char*)uart_buffer, ":")) == NULL) return ERR;
-		// this removes the "POST " (or "GET ") part
-		// get the size of the message received until "POST ", then remove
-		// the size of "+IPD,n,m:" to get the size of "POST "
-		request_start_index = ptr - uart_buffer;
-		request_size = request_size - (request_body_start_index - request_start_index) + 1 - 2; // the -2 removes \r\n
-	}
-	else
-	{
-		// otherwise get this length
-		// 				 v -----> v
-		// +IPD,n,m:GET ?xxxxxxxxxx HTTP....
-		uint32_t request_end_index = (ptr - 1) - uart_buffer;
-		if (request_end_index < request_body_start_index) return ERR;
-		request_size = request_end_index - request_body_start_index + 1;
-	}
-	if (request_size > REQUEST_MAX_SIZE) return ERR;
-	conn->request_size = request_size;
-
-	memset(conn->request, 0, REQUEST_MAX_SIZE);
-	memcpy(conn->request, (char*)uart_buffer + request_body_start_index, request_size);
-	ESP8266_ClearBuffer();
-	return OK;
-}
-
-Response_t WIFI_SendResponse(Connection_t* conn, char* status_code, char* body, uint32_t body_length)
-{
-    if (conn == NULL || status_code == NULL) return NULVAL;
-
-    // Formato stimato: "STATUS\nBODY\r\n"
-    size_t status_len = strlen(status_code);
-    
-    // total length
-    // status + '\n' (1) + body + "\r\n" (2)
-    uint32_t total_packet_len = status_len + 1 + body_length + 2;
-
-    if (total_packet_len > RESPONSE_MAX_SIZE) return ERR;
-
-    int cmd_len = snprintf(conn->response_buffer, RESPONSE_MAX_SIZE, 
-                           "AT+CIPSEND=%d,%" PRIu32 "\r\n", 
-                           conn->connection_number, total_packet_len);
-                           
-    ESP8266_SendATCommandKeepString(conn->response_buffer, cmd_len, 500);
-
-    if (ESP8266_WaitForString(">", 200) == TIMEOUT) 
-    {
-        // if no '>' is received, maybe there is no connection or the ESP is busy
-		// cannot send data
-        return TIMEOUT;
-    }
-
-    // copy status code + \n
-    memcpy(conn->response_buffer, status_code, status_len);
-    conn->response_buffer[status_len] = '\n';
-    
-    // copy body if it exists
-    if (body != NULL && body_length > 0)
-        memcpy(conn->response_buffer + status_len + 1, body, body_length);
-    
-    // add \r\n to the end
-    // start + status + \n + body
-    uint32_t crlf_pos = status_len + 1 + body_length;
-    conn->response_buffer[crlf_pos] = '\r';
-    conn->response_buffer[crlf_pos + 1] = '\n';
-
-    HAL_UART_Transmit(&STM_UART, (uint8_t*)conn->response_buffer, total_packet_len, UART_TX_TIMEOUT);
-
-    if (ESP8266_WaitForString("SEND OK", AT_LONG_TIMEOUT) == TIMEOUT)
-        return ERR;
-
-    WIFI_response_sent = true;
-    return OK;
-}
-
-void WIFI_ResetConnectionIfError(WIFI_t* wifi, Connection_t* conn, Response_t wifistatus)
-{
-	if (!WIFI_response_sent)
-	{
-		if (wifistatus == WAITING)
-			WIFI_ResetComm(wifi, conn);
-	}
-	else
-		WIFI_response_sent = false;
-}
+/* ==============================================
+ * GESTIONE TEMPO (NTP)
+ * ============================================== */
 
 static uint8_t getMonth(const char* m)
 {
@@ -820,21 +519,21 @@ Response_t WIFI_GetTime(WIFI_t* wifi)
 int32_t WIFI_GetTimeHour(WIFI_t* wifi)
 {
 	if (wifi == NULL) return 0;
-	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);	// avoids too many slow reads
+	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);
 	return bufferToInt(wifi->time, 2);
 }
 
 int32_t WIFI_GetTimeMinutes(WIFI_t* wifi)
 {
 	if (wifi == NULL) return 0;
-	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);	// avoids too many slow reads
+	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);
 	return bufferToInt(wifi->time + 3, 2);
 }
 
 int32_t WIFI_GetTimeSeconds(WIFI_t* wifi)
 {
 	if (wifi == NULL) return 0;
-	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);	// avoids too many slow reads
+	if ((int32_t)uwTick - wifi->last_time_read > 1000) WIFI_GetTime(wifi);
 	return bufferToInt(wifi->time + 6, 2);
 }
 
@@ -852,7 +551,6 @@ Response_t WIFI_EnableNTPServer(WIFI_t* wifi, int8_t time_offset)
 		if (ntp_enabled)
 			return OK;
 
-		// enable NTP server
 		wifi->last_time_read = -1000;
 		snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+CIPSNTPCFG=1,%d,\"pool.ntp.org\",\"time.nist.gov\"\r\n", time_offset);
 		return ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), AT_SHORT_TIMEOUT);
@@ -861,86 +559,110 @@ Response_t WIFI_EnableNTPServer(WIFI_t* wifi, int8_t time_offset)
 	return ERR;
 }
 
-char* WIFI_RequestHasKey(Connection_t* conn, char* desired_key)
+/* ==============================================
+ * MQTT CLIENT FUNCTIONS
+ * ============================================== */
+
+Response_t WIFI_MQTT_Config(WIFI_t* wifi, const char* client_id)
 {
-    if (conn == NULL || desired_key == NULL) return NULL;
-
-    char* ptr = conn->request;
-    size_t key_len = strlen(desired_key);
-
-    while (*ptr != '\0')
-    {
-        // skips eventual ? and & at the beginning
-        if (*ptr == '?' || *ptr == '&') ptr++;
-        
-        // 2. Controlla se la chiave corrisponde qui
-        if (strncmp(ptr, desired_key, key_len) == 0)
-        {
-            // checks if entire key matches
-            char next_char = ptr[key_len];
-            
-            if (next_char == '=' || next_char == '&' || next_char == '\0')
-                return ptr; // key found
-        }
-
-        // if no match, go to next parameter
-        ptr = strstr(ptr, "&");
-        if (ptr == NULL) break; // no other parameters
-    }
-
-    return NULL;
+	if (wifi == NULL || client_id == NULL) return NULVAL;
+	
+	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
+	// AT+MQTTUSERCFG=<LinkID>,<scheme>,<"client_id">,<"username">,<"password">,<cert_key_ID>,<CA_ID>,<"path">
+	snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+MQTTUSERCFG=0,1,\"%s\",\"\",\"\",0,0,\"\"\r\n", client_id);
+	
+	return ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), AT_SHORT_TIMEOUT);
 }
 
-char* WIFI_RequestKeyHasValue(Connection_t* conn, char* request_key_ptr, char* value)
+Response_t WIFI_MQTT_ConnectBroker(WIFI_t* wifi, const char* broker_ip, uint16_t port)
 {
-    if (conn == NULL || request_key_ptr == NULL || value == NULL) return NULL;
-
-    // check where the keye ends
-    char* cursor = request_key_ptr;
-    while (*cursor != '=' && *cursor != '&' && *cursor != ' ' && *cursor != '\0')
-        cursor++;
-
-    // key has no value
-    if (*cursor != '=') 
-        return NULL;
-
-    char* actual_value_start = cursor + 1;
-    size_t expected_len = strlen(value);
-
-    if (strncmp(actual_value_start, value, expected_len) == 0)
-    {
-        char char_after_match = actual_value_start[expected_len];
-
-        if (char_after_match == '&' || char_after_match == ' ' || 
-            char_after_match == '\0' || char_after_match == '\r' || char_after_match == '\n')
-            return actual_value_start;
-    }
-
-    return NULL;
+	if (wifi == NULL || broker_ip == NULL) return NULVAL;
+	
+	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
+	// AT+MQTTCONN=<LinkID>,<"host">,<port>,<reconnect>
+	snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+MQTTCONN=0,\"%s\",%d,1\r\n", broker_ip, port);
+	
+	return ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), 10000); 
 }
 
-char* WIFI_GetKeyValue(Connection_t* conn, char* request_key_ptr, uint32_t* value_size)
+Response_t WIFI_MQTT_Subscribe(WIFI_t* wifi, const char* topic, uint8_t qos)
 {
-    if (conn == NULL || request_key_ptr == NULL) return NULL;
+	if (wifi == NULL || topic == NULL) return NULVAL;
+	
+	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
+	// AT+MQTTSUB=<LinkID>,<"topic">,<qos>
+	snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+MQTTSUB=0,\"%s\",%d\r\n", topic, qos);
+	
+	return ESP8266_SendATCommandResponse(wifi->buf, strlen(wifi->buf), AT_SHORT_TIMEOUT);
+}
 
-    char* cursor = request_key_ptr;
-    while (*cursor != '=' && *cursor != '&' && *cursor != ' ' && *cursor != '\0' && *cursor != '\r' && *cursor != '\n')
-        cursor++;
+Response_t WIFI_MQTT_Publish(WIFI_t* wifi, const char* topic, const char* payload, uint8_t qos, uint8_t retain)
+{
+	if (wifi == NULL || topic == NULL || payload == NULL) return NULVAL;
 
-    if (*cursor != '=')
-        return NULL;
+	uint32_t payload_len = strlen(payload);
+	memset(wifi->buf, 0, WIFI_BUF_MAX_SIZE);
 
-    char* value_start = cursor + 1;
+	snprintf(wifi->buf, WIFI_BUF_MAX_SIZE, "AT+MQTTPUBRAW=0,\"%s\",%lu,%d,%d\r\n", topic, (unsigned long)payload_len, qos, retain);
 
-    if (value_size != NULL)
-    {
-        char* value_end = value_start;
-        while (*value_end != '&' && *value_end != ' ' && *value_end != '\0' && 
-               *value_end != '\r' && *value_end != '\n')
-            value_end++;
-        
-        *value_size = (uint32_t)(value_end - value_start);
-    }
+	ESP8266_ClearBuffer();
+	if (HAL_UART_Transmit(&STM_UART, (uint8_t*)wifi->buf, strlen(wifi->buf), UART_TX_TIMEOUT) != HAL_OK) 
+		return ERR;
 
-    return value_start;
+	if (ESP8266_WaitKeepString(">", AT_SHORT_TIMEOUT) == OK)
+	{
+		ESP8266_ClearBuffer();
+		
+		if (HAL_UART_Transmit(&STM_UART, (uint8_t*)payload, payload_len, UART_TX_TIMEOUT) != HAL_OK) 
+			return ERR;
+
+		return ESP8266_WaitForString("OK", AT_MEDIUM_TIMEOUT);
+	}
+
+	return ERR;
+}
+
+Response_t WIFI_MQTT_Receive(WIFI_t* wifi, char* topic_out, char* payload_out, uint32_t timeout)
+{
+	if (wifi == NULL || topic_out == NULL || payload_out == NULL) return NULVAL;
+
+	char* ptr = NULL;
+	uint32_t start_time = uwTick;
+	
+	while (1)
+	{
+		if (uwTick - start_time > timeout) return TIMEOUT;
+		if ((ptr = strstr((char*)uart_buffer, "+MQTTSUBRECV:")) != NULL) break;
+	}
+
+	char* topic_start = strstr(ptr, "\"");
+	if (!topic_start) return ERR;
+	topic_start++; 
+	
+	char* topic_end = strstr(topic_start, "\"");
+	if (!topic_end) return ERR;
+	
+	uint32_t topic_len = topic_end - topic_start;
+	strncpy(topic_out, topic_start, topic_len);
+	topic_out[topic_len] = '\0';
+	
+	char* len_start = topic_end + 2; 
+	char* len_end = strstr(len_start, ",");
+	if (!len_end) return ERR;
+	
+	uint32_t payload_len = bufferToInt(len_start, len_end - len_start);
+	
+	char* payload_start = len_end + 1;
+	
+	start_time = uwTick;
+	while (strlen(payload_start) < payload_len)
+	{
+		 if (uwTick - start_time > timeout) return TIMEOUT;
+	}
+	
+	strncpy(payload_out, payload_start, payload_len);
+	payload_out[payload_len] = '\0';
+	
+	ESP8266_ClearBuffer();
+	return OK;
 }
